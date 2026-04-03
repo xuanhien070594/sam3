@@ -8,12 +8,18 @@ from sam3.model.sam3_image_processor import Sam3Processor
 from sam3.visualization_utils import draw_box_on_image, normalize_bbox, plot_results
 from sam3.model.box_ops import box_xywh_to_cxcywh
 import matplotlib.pyplot as plt
-
+import argparse
 from google import genai
 
 CLIENT = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-OBJECT_NAMES = ["A_shape_video", "I_shape_video", "R_shape_video"]
-IMAGE_PATH = "scripts/test_image.jpg"
+OBJECT_NAMES = ["A_shape_video", "I_shape_video", "R_shape_video", "D_shape_video"]
+IMAGE_PATH = "scripts/test_image_1.jpg"
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--image_path", type=str, default=IMAGE_PATH)
+args = parser.parse_args()
+IMAGE_PATH = args.image_path
 
 
 def _extract_json(text: str):
@@ -104,6 +110,11 @@ inference_state = processor.set_image(image)
 box_input_xywh, object_names = generate_gemini_mask(IMAGE_PATH, CLIENT, OBJECT_NAMES)
 print(box_input_xywh)
 print(object_names)
+# save object_names in a text file, clear the file first
+with open("/home/yufeiyang/git/sam3/scripts/object_names.txt", "w") as f:
+    for name in object_names:
+        f.write(name + "\n")
+
 box_input_cxcywh = box_xywh_to_cxcywh(torch.tensor(box_input_xywh).view(-1, 4))
 norm_boxes_cxcywh = normalize_bbox(box_input_cxcywh, width, height).tolist()
 
@@ -125,4 +136,4 @@ for i, object_name in enumerate(object_names):
 
     mask = inference_state["masks"][0][0].detach().cpu().numpy()
     img = Image.fromarray(mask.astype("uint8") * 255, mode="L")
-    img.save(f"mask_{object_name}.png")
+    img.save(f"/home/yufeiyang/Documents/BundleSDF/assets/mask_{object_name}.png")
