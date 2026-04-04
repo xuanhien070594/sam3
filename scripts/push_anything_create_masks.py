@@ -10,16 +10,8 @@ from sam3.model.box_ops import box_xywh_to_cxcywh
 import matplotlib.pyplot as plt
 import argparse
 from google import genai
-
-CLIENT = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-OBJECT_NAMES = ["A_shape_video", "I_shape_video", "R_shape_video", "D_shape_video"]
-IMAGE_PATH = "scripts/test_image_1.jpg"
-
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--image_path", type=str, default=IMAGE_PATH)
-args = parser.parse_args()
-IMAGE_PATH = args.image_path
+from typing import List, Tuple
+import numpy as np
 
 
 def _extract_json(text: str):
@@ -54,9 +46,9 @@ def _convert_box_to_xywh(box, img_w, img_h):
     return [x1, y1, x2 - x1, y2 - y1]
 
 
-def generate_gemini_mask(image_path, client, object_names):
-    # Load image
-    img = Image.open(image_path)
+def generate_gemini_mask(
+    img: Image.Image, client: genai.Client, object_names: List[str]
+) -> Tuple[List[List[int]], List[str]]:
     img_w, img_h = img.size
 
     prompt = f"""
@@ -99,41 +91,57 @@ def generate_gemini_mask(image_path, client, object_names):
     return bounding_boxes, labels
 
 
-# Load the model
-model = build_sam3_image_model()
-processor = Sam3Processor(model)
-image = Image.open(IMAGE_PATH)
-width, height = image.size
-inference_state = processor.set_image(image)
+def scan_for_objects(
+    img: Image.Image, masks_folder: str = "/home/yufeiyang/Documents/BundleSDF/assets/"
+) -> List[str]:
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    object_library = [
+        "A_shape_video",
+        "I_shape_video",
+        "R_shape_video",
+        "D_shape_video",
+    ]
 
-# Use Gemini to generate bounding boxes and labels
-box_input_xywh, object_names = generate_gemini_mask(IMAGE_PATH, CLIENT, OBJECT_NAMES)
-print(box_input_xywh)
-print(object_names)
-# save object_names in a text file, clear the file first
-with open("/home/yufeiyang/git/sam3/scripts/object_names.txt", "w") as f:
-    for name in object_names:
-        f.write(name + "\n")
+    # Load SAM3 model
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = build_sam3_image_model(device=device)
+    processor = Sam3Processor(model)
+    width, height = img.size
+    inference_state = processor.set_image(img)
 
-box_input_cxcywh = box_xywh_to_cxcywh(torch.tensor(box_input_xywh).view(-1, 4))
-norm_boxes_cxcywh = normalize_bbox(box_input_cxcywh, width, height).tolist()
+    # Use Gemini to generate bounding boxes and labels
+    box_input_xywh, object_names = generate_gemini_mask(img, client, object_library)
+    print(
+        f"Identified {len(box_input_xywh)} objects with bounding boxes: {box_input_xywh}"
+    )
+    print(f"Identified {len(object_names)} objects with names: {object_names}")
+
+    box_input_cxcywh = box_xywh_to_cxcywh(torch.tensor(box_input_xywh).view(-1, 4))
+    norm_boxes_cxcywh = normalize_bbox(box_input_cxcywh, width, height).tolist()
+
+    for i, object_name in enumerate(object_names):
+        # Create negative and positive boxes for sam3's box prompt
+        # Negative boxes are boxes that are not the object of interest
+        box_labels = [False] * len(object_names)
+        box_labels[i] = True
+
+        processor.reset_all_prompts(inference_state)
+
+        for box, label in zip(norm_boxes_cxcywh, box_labels):
+            inference_state = processor.add_geometric_prompt(
+                state=inference_state, box=box, label=label
+            )
+
+        assert (
+            inference_state["masks"].shape[0] == 1
+        ), "Only one mask should be generated"
+
+        mask = inference_state["masks"][0][0].detach().cpu().numpy()
+        mask_img = Image.fromarray(mask.astype("uint8") * 255, mode="L")
+        mask_img.save(f"{masks_folder}/mask_{object_name}.png")
 
 
-for i, object_name in enumerate(object_names):
-    # Create negative and positive boxes for sam3's box prompt
-    # Negative boxes are boxes that are not the object of interest
-    box_labels = [False] * len(object_names)
-    box_labels[i] = True
-
-    processor.reset_all_prompts(inference_state)
-
-    for box, label in zip(norm_boxes_cxcywh, box_labels):
-        inference_state = processor.add_geometric_prompt(
-            state=inference_state, box=box, label=label
-        )
-
-    assert inference_state["masks"].shape[0] == 1, "Only one mask should be generated"
-
-    mask = inference_state["masks"][0][0].detach().cpu().numpy()
-    img = Image.fromarray(mask.astype("uint8") * 255, mode="L")
-    img.save(f"/home/yufeiyang/Documents/BundleSDF/assets/mask_{object_name}.png")
+if __name__ == "__main__":
+    img = Image.open("/Users/hienbui/git/sam3/scripts/realsense_capture.jpg")
+    folder = "/Users/hienbui/Downloads/"
+    scan_for_objects(img, folder)

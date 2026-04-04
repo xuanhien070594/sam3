@@ -5,8 +5,17 @@
 """Triton kernel for euclidean distance transform (EDT)"""
 
 import torch
-import triton
-import triton.language as tl
+
+# Try to import triton, but provide fallback for macOS and other platforms
+try:
+    import triton
+    import triton.language as tl
+
+    HAS_TRITON = True
+except (ImportError, ModuleNotFoundError):
+    HAS_TRITON = False
+    triton = None
+    tl = None
 
 """
 Disclaimer: This implementation is not meant to be extremely efficient. A CUDA kernel would likely be more efficient.
@@ -52,8 +61,21 @@ Overall, despite being quite naive, this implementation is roughly 5.5x faster t
 """
 
 
-@triton.jit
-def edt_kernel(inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.constexpr):
+if HAS_TRITON:
+
+    @triton.jit
+    def edt_kernel(
+        inputs_ptr, outputs_ptr, v, z, height, width, horizontal: tl.constexpr
+    ):
+        # This is a somewhat verbatim implementation of the efficient 1D EDT algorithm described above
+        # It can be applied horizontally or vertically depending if we're doing the first or second stage.
+        # It's parallelized across batch+row (or batch+col if horizontal=False)
+        # TODO: perhaps the implementation can be revisited if/when local gather/scatter become available in triton
+        batch_id = tl.program_id(axis=0)
+        if horizontal:
+            row_id = tl.program_id(axis=1)
+            block_start = (batch_id * height * width) + row_id * width
+
     # This is a somewhat verbatim implementation of the efficient 1D EDT algorithm described above
     # It can be applied horizontally or vertically depending if we're doing the first or second stage.
     # It's parallelized across batch+row (or batch+col if horizontal=False)
@@ -127,6 +149,8 @@ def edt_triton(data: torch.Tensor):
         A tensor of the same shape as data containing the EDT.
         It should be equivalent to a batched version of cv2.distanceTransform(input, cv2.DIST_L2, 0)
     """
+    if not HAS_TRITON or not data.is_cuda:
+        return edt_cpu_fallback(data)
     assert data.dim() == 3
     assert data.is_cuda
     B, H, W = data.shape
@@ -173,3 +197,34 @@ def edt_triton(data: torch.Tensor):
     )
     # don't forget to take sqrt at the end
     return output.sqrt()
+
+
+def edt_cpu_fallback(data: torch.Tensor):
+    """
+    CPU fallback for EDT using scipy's distance_transform_edt.
+    Used when Triton is not available (e.g., on macOS).
+    """
+    try:
+        from scipy.ndimage import distance_transform_edt
+    except ImportError:
+        raise ImportError(
+            "scipy is required for CPU EDT fallback. " "Install with: pip install scipy"
+        )
+
+    assert data.dim() == 3
+    B, H, W = data.shape
+
+    # Move to CPU if on GPU
+    device = data.device
+    data_cpu = data.cpu().numpy()
+
+    # Compute EDT for each image in batch
+    output = torch.zeros_like(data, dtype=torch.float32)
+    for i in range(B):
+        # Invert: 1 -> 0, 0 -> 1 for scipy
+        inverted = 1 - data_cpu[i]
+        edt_result = distance_transform_edt(inverted)
+        output[i] = torch.from_numpy(edt_result)
+
+    # Move back to original device
+    return output.to(device)
