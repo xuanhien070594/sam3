@@ -33,6 +33,16 @@ from PIL import Image
 
 from object_detection_and_segmentation import scan_objects
 
+# One color per object (by order in the scene); used for both current and goal boxes.
+OBJECT_EDGE_COLORS = (
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+)
+
+WORKSPACE_X_LIMIT = (0.372, 0.625)
+WORKSPACE_Y_LIMIT = (-0.38, 0.38)
+
 
 class InteractiveImageGUI(QWidget):
     def __init__(self):
@@ -230,7 +240,13 @@ class InteractiveImageGUI(QWidget):
                 pipeline.stop()
 
     def _rect_corners(self, cx, cy, w, h, angle):
-        rect = patches.Rectangle((cx - w / 2, cy - h / 2), w, h, angle=angle)
+        rect = patches.Rectangle(
+            (cx - w / 2, cy - h / 2),
+            w,
+            h,
+            angle=angle,
+            rotation_point="center",
+        )
         path = rect.get_path()
         tr = rect.get_transform()
         corners = tr.transform(path.vertices)[:4]
@@ -261,18 +277,18 @@ class InteractiveImageGUI(QWidget):
                 state2 = self.object_states[j]
 
                 corners1 = self._rect_corners(
-                    state1["cx"],
-                    state1["cy"],
+                    state1["goal_cx"],
+                    state1["goal_cy"],
                     state1["dims"][0],
                     state1["dims"][1],
-                    state1["angle"],
+                    state1["goal_angle"],
                 )
                 corners2 = self._rect_corners(
-                    state2["cx"],
-                    state2["cy"],
+                    state2["goal_cx"],
+                    state2["goal_cy"],
                     state2["dims"][0],
                     state2["dims"][1],
-                    state2["angle"],
+                    state2["goal_angle"],
                 )
 
                 poly1 = Polygon(corners1)
@@ -286,6 +302,28 @@ class InteractiveImageGUI(QWidget):
                     )
                     return True
 
+        return False
+
+    def _goals_outside_workspace(self) -> bool:
+        wx0, wx1 = WORKSPACE_X_LIMIT
+        wy0, wy1 = WORKSPACE_Y_LIMIT
+        for state in self.object_states:
+            corners = self._rect_corners(
+                state["goal_cx"],
+                state["goal_cy"],
+                state["dims"][0],
+                state["dims"][1],
+                state["goal_angle"],
+            )
+            for x, y in corners:
+                if not (wx0 <= x <= wx1 and wy0 <= y <= wy1):
+                    logger.warning(
+                        "Goal for '{}' outside workspace (corner {:.4f}, {:.4f})",
+                        state["name"],
+                        x,
+                        y,
+                    )
+                    return True
         return False
 
     def on_scan(self) -> None:
@@ -390,7 +428,16 @@ class InteractiveImageGUI(QWidget):
                 )
 
             self.object_states.append(
-                {"name": name, "cx": cx, "cy": cy, "angle": angle, "dims": dims}
+                {
+                    "name": name,
+                    "cx": cx,
+                    "cy": cy,
+                    "angle": angle,
+                    "goal_cx": cx,
+                    "goal_cy": cy,
+                    "goal_angle": angle,
+                    "dims": dims,
+                }
             )
 
         self.current_object_index = 0 if self.object_states else -1
@@ -419,13 +466,12 @@ class InteractiveImageGUI(QWidget):
         logger.info("Start Pushing button pressed")
         if self.object_states:
             for state in self.object_states:
-                cx = state["cx"]
-                cy = state["cy"]
                 logger.info(
-                    "Object '{}' bounding box center: ({:.4f}, {:.4f})",
+                    "Object '{}' goal center: ({:.4f}, {:.4f}), goal angle: {:.2f}°",
                     state["name"],
-                    cx,
-                    cy,
+                    state["goal_cx"],
+                    state["goal_cy"],
+                    state["goal_angle"],
                 )
                 logger.info("{}", state)
         else:
@@ -439,32 +485,80 @@ class InteractiveImageGUI(QWidget):
         self.canvas.figure.clear()
         if self.object_states:
             ax = self.canvas.figure.add_subplot(111)
+            wx0, wx1 = WORKSPACE_X_LIMIT
+            wy0, wy1 = WORKSPACE_Y_LIMIT
+            workspace_rect = patches.Rectangle(
+                (wx0, wy0),
+                wx1 - wx0,
+                wy1 - wy0,
+                linewidth=1.5,
+                edgecolor="black",
+                facecolor="none",
+                linestyle="--",
+                zorder=2,
+            )
+            ax.add_patch(workspace_rect)
             for i, state in enumerate(self.object_states):
-                cx, cy = state["cx"], state["cy"]
+                color = OBJECT_EDGE_COLORS[i % len(OBJECT_EDGE_COLORS)]
                 dims = state["dims"]
-                angle = state["angle"]
-                color = "blue" if i == self.current_object_index else "red"
-                rect = patches.Rectangle(
-                    (cx - dims[0] / 2, cy - dims[1] / 2),
+                ccx, ccy, cang = state["cx"], state["cy"], state["angle"]
+                gcx, gcy, gang = (
+                    state["goal_cx"],
+                    state["goal_cy"],
+                    state["goal_angle"],
+                )
+                rect_current = patches.Rectangle(
+                    (ccx - dims[0] / 2, ccy - dims[1] / 2),
+                    dims[0],
+                    dims[1],
+                    linewidth=1.5,
+                    edgecolor=color,
+                    facecolor="none",
+                    angle=cang,
+                    rotation_point="center",
+                    linestyle="-",
+                    zorder=3,
+                )
+                ax.add_patch(rect_current)
+                rect_goal = patches.Rectangle(
+                    (gcx - dims[0] / 2, gcy - dims[1] / 2),
                     dims[0],
                     dims[1],
                     linewidth=2,
                     edgecolor=color,
                     facecolor="none",
-                    angle=angle,
+                    angle=gang,
+                    rotation_point="center",
+                    linestyle="--",
+                    zorder=4,
                 )
-                ax.add_patch(rect)
-                # Add text label at center
-                ax.text(cx, cy, state["name"], ha="center", va="center", fontsize=8)
-            ax.set_xlim(0, 1)
-            ax.set_ylim(-0.75, 0.75)
+                ax.add_patch(rect_goal)
+                ax.text(
+                    gcx,
+                    gcy,
+                    state["name"],
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color=color,
+                )
+            ax.set_xlim(0, 0.8)
+            ax.set_ylim(-0.5, 0.5)
             ax.set_aspect("equal")
-            ax.set_title("Object Bounding Boxes")
+            ax.set_title(
+                "Objects: solid = current, dashed = goal (fixed color per object)"
+            )
             self._annotate_robot_frame(ax)
 
-            # Check for overlaps
-            if self.check_overlap():
+            # Green only when goals are inside workspace AND do not overlap each other.
+            goals_overlap = self.check_overlap()
+            goals_outside_ws = self._goals_outside_workspace()
+            if goals_overlap:
                 self.warning_label.setText("Warning: Bounding boxes overlap!")
+                self.warning_label.show()
+                self.valid_goals_label.hide()
+            elif goals_outside_ws:
+                self.warning_label.setText("Warning: Goal(s) outside workspace!")
                 self.warning_label.show()
                 self.valid_goals_label.hide()
             else:
@@ -558,18 +652,18 @@ class InteractiveImageGUI(QWidget):
                 w.setText("—")
             return
         st = self.object_states[self.current_object_index]
-        self.value_slider_x.setText(f"{st['cx']:.3f} m")
-        self.value_slider_y.setText(f"{st['cy']:.3f} m")
-        self.value_slider_rot.setText(f"{st['angle']:.1f}°")
+        self.value_slider_x.setText(f"{st['goal_cx']:.3f} m")
+        self.value_slider_y.setText(f"{st['goal_cy']:.3f} m")
+        self.value_slider_rot.setText(f"{st['goal_angle']:.1f}°")
 
     def _sync_sliders_from_state(self) -> None:
         if not self.object_states or self.current_object_index < 0:
             self._update_slider_value_labels()
             return
         state = self.object_states[self.current_object_index]
-        cx = int(round(max(-0.5, min(1.0, state["cx"])) * 1000))
-        cy = int(round(max(-0.75, min(0.75, state["cy"])) * 1000))
-        angle = max(-360.0, min(360.0, float(state["angle"])))
+        cx = int(round(max(-0.5, min(1.0, state["goal_cx"])) * 1000))
+        cy = int(round(max(-0.75, min(0.75, state["goal_cy"])) * 1000))
+        angle = max(-360.0, min(360.0, float(state["goal_angle"])))
         rot = int(round(angle * 10))
         for s, v in (
             (self.slider_x, cx),
@@ -583,19 +677,19 @@ class InteractiveImageGUI(QWidget):
 
     def on_slider_x_changed(self, value: int) -> None:
         if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["cx"] = value / 1000.0
+            self.object_states[self.current_object_index]["goal_cx"] = value / 1000.0
         self._update_slider_value_labels()
         self.update_plot()
 
     def on_slider_y_changed(self, value: int) -> None:
         if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["cy"] = value / 1000.0
+            self.object_states[self.current_object_index]["goal_cy"] = value / 1000.0
         self._update_slider_value_labels()
         self.update_plot()
 
     def on_slider_rot_changed(self, value: int) -> None:
         if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["angle"] = value / 10.0
+            self.object_states[self.current_object_index]["goal_angle"] = value / 10.0
         self._update_slider_value_labels()
         self.update_plot()
 
