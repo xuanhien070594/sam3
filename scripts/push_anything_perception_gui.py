@@ -6,10 +6,14 @@ from PyQt5.QtWidgets import (
     QWidget,
     QLabel,
     QPushButton,
+    QSlider,
+    QComboBox,
     QVBoxLayout,
     QHBoxLayout,
+    QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QPoint
+from PyQt5.QtGui import QFont
 import subprocess
 import numpy as np
 import datetime
@@ -46,15 +50,17 @@ class InteractiveImageGUI(QWidget):
         self.auto_tracking_gui_path = os.path.join(
             self.bundle_sdf_dir, "auto_tracking_gui.py"
         )
-        self.mesh_assets_dir = os.path.join(self.bundle_sdf_dir, "assets_textured")
-        self.foundation_pose_dir = os.path.join(self.bundle_sdf_dir, "foundationPose")
+        # self.mesh_assets_dir = os.path.join(self.bundle_sdf_dir, "assets_textured")
+        # self.foundation_pose_dir = os.path.join(self.bundle_sdf_dir, "foundationPose")
         # self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
 
         # TODO: will be removed once the testings on MacOS are done
-        self.masks_dir = "/Users/hienbui/Downloads/"
+        self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
+        self.foundation_pose_dir = "/Users/hienbui/Downloads"
+        self.masks_dir = "/Users/hienbui/Downloads"
 
         self.setWindowTitle("Interactive Image GUI")
-        self.resize(600, 400)
+        self.resize(1200, 1500)
 
         # Store clicked points
         self.points = []
@@ -67,73 +73,116 @@ class InteractiveImageGUI(QWidget):
         self.btn1 = QPushButton("Scan")
         self.btn2 = QPushButton("Select Goals")
         self.btn3 = QPushButton("Start Pushing")
-        self.btn_adjust_x = QPushButton("Adjust X")
-        self.btn_adjust_y = QPushButton("Adjust Y")
-        self.btn_adjust_rot = QPushButton("Adjust Rotation")
-        self.btn_next = QPushButton("Next Object")
-        self.btn_x_plus = QPushButton("X+")
-        self.btn_x_minus = QPushButton("X-")
-        self.btn_y_plus = QPushButton("Y+")
-        self.btn_y_minus = QPushButton("Y-")
-        self.btn_rot_plus = QPushButton("Rot+")
-        self.btn_rot_minus = QPushButton("Rot-")
+        _primary_font = QFont()
+        _primary_font.setPointSize(15)
+        for _b in (self.btn1, self.btn2, self.btn3):
+            _b.setFont(_primary_font)
+            _b.setMinimumHeight(46)
+            _b.setMinimumWidth(175)
+
+        self.slider_x = QSlider(Qt.Horizontal)
+        self.slider_y = QSlider(Qt.Horizontal)
+        self.slider_rot = QSlider(Qt.Horizontal)
+        self.slider_x.setRange(-500, 1000)
+        self.slider_y.setRange(-750, 750)
+        self.slider_rot.setRange(-3600, 3600)
+        self.slider_x.setSingleStep(10)
+        self.slider_y.setSingleStep(10)
+        self.slider_rot.setSingleStep(10)
+        for _s in (self.slider_x, self.slider_y, self.slider_rot):
+            # Enough height so the handle is not clipped in tight rows (esp. macOS)
+            _s.setMinimumHeight(36)
+            _s.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.label_object = QLabel("Object: ")
+        self.combo_object = QComboBox()
+        self.combo_object.setMinimumWidth(200)
+
+        self.warning_label = QLabel("")
+        self.warning_label.setStyleSheet("color: red; font-size: 17pt;")
+        self.warning_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.warning_label.hide()
+        self.valid_goals_label = QLabel("")
+        self.valid_goals_label.setStyleSheet("color: green; font-size: 17pt;")
+        self.valid_goals_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.valid_goals_label.hide()
 
         self.btn1.clicked.connect(self.on_scan)
         self.btn2.clicked.connect(self.on_select)
         self.btn3.clicked.connect(self.on_start_pushing)
-        self.btn_adjust_x.clicked.connect(self.on_adjust_x)
-        self.btn_adjust_y.clicked.connect(self.on_adjust_y)
-        self.btn_adjust_rot.clicked.connect(self.on_adjust_rot)
-        self.btn_next.clicked.connect(self.on_next_object)
-        self.btn_x_plus.clicked.connect(self.on_x_plus)
-        self.btn_x_minus.clicked.connect(self.on_x_minus)
-        self.btn_y_plus.clicked.connect(self.on_y_plus)
-        self.btn_y_minus.clicked.connect(self.on_y_minus)
-        self.btn_rot_plus.clicked.connect(self.on_rot_plus)
-        self.btn_rot_minus.clicked.connect(self.on_rot_minus)
+        self.slider_x.valueChanged.connect(self.on_slider_x_changed)
+        self.slider_y.valueChanged.connect(self.on_slider_y_changed)
+        self.slider_rot.valueChanged.connect(self.on_slider_rot_changed)
+        self.combo_object.currentIndexChanged.connect(self.on_object_combo_changed)
 
         button_layout.addWidget(self.btn1)
         button_layout.addWidget(self.btn2)
         button_layout.addWidget(self.btn3)
-        button_layout.addWidget(self.btn_adjust_x)
-        button_layout.addWidget(self.btn_adjust_y)
-        button_layout.addWidget(self.btn_adjust_rot)
-        button_layout.addWidget(self.btn_next)
-        button_layout.addWidget(self.btn_x_plus)
-        button_layout.addWidget(self.btn_x_minus)
-        button_layout.addWidget(self.btn_y_plus)
-        button_layout.addWidget(self.btn_y_minus)
-        button_layout.addWidget(self.btn_rot_plus)
-        button_layout.addWidget(self.btn_rot_minus)
 
-        # Initially hide adjust buttons
-        self.btn_adjust_x.hide()
-        self.btn_adjust_y.hide()
-        self.btn_adjust_rot.hide()
-        self.btn_next.hide()
-        self.btn_x_plus.hide()
-        self.btn_x_minus.hide()
-        self.btn_y_plus.hide()
-        self.btn_y_minus.hide()
-        self.btn_rot_plus.hide()
-        self.btn_rot_minus.hide()
+        object_row_layout = QHBoxLayout()
+        object_row_layout.addWidget(self.label_object)
+        object_row_layout.addWidget(self.combo_object)
+        object_row_layout.addWidget(self.warning_label)
+        object_row_layout.addWidget(self.valid_goals_label)
+        object_row_layout.addStretch()
+
+        sliders_layout = QVBoxLayout()
+        sliders_layout.setSpacing(16)
+        sliders_layout.setContentsMargins(0, 8, 0, 8)
+        self.label_slider_x = QLabel("X (m)")
+        self.label_slider_y = QLabel("Y (m)")
+        self.label_slider_rot = QLabel("Rot (°)")
+        self.value_slider_x = QLabel("")
+        self.value_slider_y = QLabel("")
+        self.value_slider_rot = QLabel("")
+        for w in (self.value_slider_x, self.value_slider_y, self.value_slider_rot):
+            w.setMinimumWidth(88)
+            w.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        row_x = QHBoxLayout()
+        row_x.addWidget(self.label_slider_x)
+        row_x.addWidget(self.slider_x, 1)
+        row_x.addWidget(self.value_slider_x)
+        row_y = QHBoxLayout()
+        row_y.addWidget(self.label_slider_y)
+        row_y.addWidget(self.slider_y, 1)
+        row_y.addWidget(self.value_slider_y)
+        row_rot = QHBoxLayout()
+        row_rot.addWidget(self.label_slider_rot)
+        row_rot.addWidget(self.slider_rot, 1)
+        row_rot.addWidget(self.value_slider_rot)
+        for _row in (row_x, row_y, row_rot):
+            _row.setContentsMargins(0, 4, 0, 4)
+
+        sliders_layout.addLayout(row_x)
+        sliders_layout.addLayout(row_y)
+        sliders_layout.addLayout(row_rot)
+
+        # Initially hide adjust controls (labels + sliders until Select Goals)
+        self.label_slider_x.hide()
+        self.label_slider_y.hide()
+        self.label_slider_rot.hide()
+        self.slider_x.hide()
+        self.slider_y.hide()
+        self.slider_rot.hide()
+        self.value_slider_x.hide()
+        self.value_slider_y.hide()
+        self.value_slider_rot.hide()
+        self.label_object.hide()
+        self.combo_object.hide()
+        self.warning_label.hide()
+        self.valid_goals_label.hide()
 
         # --- Image label ---
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMouseTracking(True)  # needed for mouse events
 
-        # Matplotlib canvas
-        self.canvas = FigureCanvas(Figure())
-        self.canvas.setMouseTracking(True)
-        self.current_coord = ""
-        self.canvas.mpl_connect("motion_notify_event", self.on_mouse_move)
+        # Matplotlib canvas (margins applied after each draw; stretch so plot isn't clipped)
+        self.canvas = FigureCanvas(Figure(figsize=(8, 6), dpi=100))
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setMinimumHeight(260)
         self.canvas.hide()
-
-        # Warning label
-        self.warning_label = QLabel("")
-        self.warning_label.setStyleSheet("color: red;")
-        self.warning_label.hide()
 
         # Cursor coordinates label (always visible once hover starts)
         self.coord_label = QLabel("")
@@ -144,9 +193,10 @@ class InteractiveImageGUI(QWidget):
 
         # Add widgets to layout
         main_layout.addLayout(button_layout)
+        main_layout.addLayout(object_row_layout)
+        main_layout.addLayout(sliders_layout)
         main_layout.addWidget(self.image_label)
-        main_layout.addWidget(self.canvas)
-        main_layout.addWidget(self.warning_label)
+        main_layout.addWidget(self.canvas, 1)
         main_layout.addWidget(self.coord_label)
         self.setLayout(main_layout)
 
@@ -154,15 +204,6 @@ class InteractiveImageGUI(QWidget):
         self.object_states = []
         self.current_object_index = 0
         self.current_detected_objects: List[str] = []
-
-    def on_mouse_move(self, event):
-        if event.inaxes is None:
-            return
-        x, y = event.xdata, event.ydata
-        if x is None or y is None:
-            return
-        self.current_coord = f"({x:.3f}, {y:.3f})"
-        self.coord_label.setText(f"Cursor: {self.current_coord}")
 
     def _capture_realsense_frame(self) -> Optional[np.ndarray]:
         pipeline = rs.pipeline()
@@ -270,7 +311,7 @@ class InteractiveImageGUI(QWidget):
         ax = self.canvas.figure.add_subplot(111)
         ax.imshow(img_rgb)
         ax.axis("off")
-        self.canvas.figure.tight_layout()
+        self._apply_figure_margins()
         self.canvas.draw()
         self.canvas.show()
         self.image_label.hide()
@@ -296,20 +337,14 @@ class InteractiveImageGUI(QWidget):
     def on_select(self):
         logger.info("User pressed Select Goals button")
         # TODO ask if user want to use default goal (last targets for recovery) or select new ones
-        # load object names in object_names.txt
-        object_names = []
-        if os.path.exists(self.object_names_path):
-            with open(self.object_names_path, "r") as f:
-                object_names = [line.strip() for line in f.readlines()]
-            logger.info("Loaded object names: {}", object_names)
-
         # load the mesh files
+        # and get the bounding box extents (x, y, z size)
         object_dims = []
-        for name in object_names:
+        self.current_detected_objects = ["I_shape_video", "R_shape_video"]
+        for name in self.current_detected_objects:
             mesh_path = os.path.join(self.mesh_assets_dir, f"{name}.obj")
             if os.path.exists(mesh_path):
                 mesh = trimesh.load(mesh_path)
-                # bounding box extents (x, y, z size)
                 dimensions = mesh.bounding_box.extents
                 logger.info("{}", dimensions)
                 object_dims.append((name, dimensions))
@@ -360,17 +395,23 @@ class InteractiveImageGUI(QWidget):
 
         self.current_object_index = 0 if self.object_states else -1
 
-        # Hide image and show plot and adjust buttons
+        # Hide image and show plot and sliders
         self.image_label.hide()
         self.canvas.show()
-        self.btn_x_plus.show()
-        self.btn_x_minus.show()
-        self.btn_y_plus.show()
-        self.btn_y_minus.show()
-        self.btn_rot_plus.show()
-        self.btn_rot_minus.show()
-        self.btn_next.show()
+        self.label_slider_x.show()
+        self.label_slider_y.show()
+        self.label_slider_rot.show()
+        self.slider_x.show()
+        self.slider_y.show()
+        self.slider_rot.show()
+        self.value_slider_x.show()
+        self.value_slider_y.show()
+        self.value_slider_rot.show()
+        self.label_object.show()
+        self.combo_object.show()
 
+        self._populate_object_combo()
+        self._sync_sliders_from_state()
         self.update_plot()
 
     def on_start_pushing(self):
@@ -415,29 +456,21 @@ class InteractiveImageGUI(QWidget):
                 ax.add_patch(rect)
                 # Add text label at center
                 ax.text(cx, cy, state["name"], ha="center", va="center", fontsize=8)
-            ax.set_xlim(-0.5, 1)
+            ax.set_xlim(0, 1)
             ax.set_ylim(-0.75, 0.75)
             ax.set_aspect("equal")
             ax.set_title("Object Bounding Boxes")
-
-            if self.current_coord:
-                ax.text(
-                    0.02,
-                    0.98,
-                    self.current_coord,
-                    transform=ax.transAxes,
-                    fontsize=9,
-                    color="black",
-                    verticalalignment="top",
-                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-                )
+            self._annotate_robot_frame(ax)
 
             # Check for overlaps
             if self.check_overlap():
                 self.warning_label.setText("Warning: Bounding boxes overlap!")
                 self.warning_label.show()
+                self.valid_goals_label.hide()
             else:
                 self.warning_label.hide()
+                self.valid_goals_label.setText("Selected goals are valid.")
+                self.valid_goals_label.show()
         else:
             ax = self.canvas.figure.add_subplot(111)
             ax.text(
@@ -450,58 +483,138 @@ class InteractiveImageGUI(QWidget):
             )
             ax.set_title("No Data")
             self.warning_label.hide()
+            self.valid_goals_label.hide()
+        self._apply_figure_margins()
         self.canvas.draw()
 
-    def on_adjust_x(self):
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["cx"] += 0.05
-        self.update_plot()
-
-    def on_adjust_y(self):
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["cy"] += 0.05
-        self.update_plot()
-
-    def on_adjust_rot(self):
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["angle"] += 10
-        self.update_plot()
-
-    def on_next_object(self):
-        if self.object_states:
-            self.current_object_index = (self.current_object_index + 1) % len(
-                self.object_states
+    def _annotate_robot_frame(self, ax) -> None:
+        """Draw XY robot triad at origin (Z omitted); 2D plot is the X–Y plane."""
+        L = 0.12
+        z = 10
+        # clip_on=False: vertical arrow sits on x=0; arrowhead can extend past the left spine and was clipped.
+        kw = dict(
+            arrowstyle="->",
+            mutation_scale=18,
+            linewidth=1.8,
+            zorder=z,
+            clip_on=False,
+        )
+        ax.add_patch(
+            patches.FancyArrowPatch(
+                (0.0, 0.0),
+                (L, 0.0),
+                color="darkred",
+                **kw,
             )
+        )
+        ax.add_patch(
+            patches.FancyArrowPatch(
+                (0.0, 0.0),
+                (0.0, L),
+                color="darkgreen",
+                **kw,
+            )
+        )
+        ax.text(
+            L + 0.02,
+            0.0,
+            "x",
+            fontsize=10,
+            color="darkred",
+            zorder=z,
+            va="center",
+            clip_on=False,
+        )
+        ax.text(
+            0.02,
+            L + 0.02,
+            "y",
+            fontsize=10,
+            color="darkgreen",
+            zorder=z,
+            ha="center",
+            va="bottom",
+            clip_on=False,
+        )
+        ax.text(
+            0.02,
+            -0.06,
+            "Robot Frame",
+            fontsize=9,
+            color="black",
+            zorder=z,
+            ha="left",
+            va="top",
+            clip_on=False,
+        )
+
+    def _apply_figure_margins(self) -> None:
+        # Embedded Qt canvas needs explicit room for title and axis tick labels.
+        self.canvas.figure.subplots_adjust(left=0.12, right=0.96, top=0.90, bottom=0.14)
+
+    def _update_slider_value_labels(self) -> None:
+        if not self.object_states or self.current_object_index < 0:
+            for w in (self.value_slider_x, self.value_slider_y, self.value_slider_rot):
+                w.setText("—")
+            return
+        st = self.object_states[self.current_object_index]
+        self.value_slider_x.setText(f"{st['cx']:.3f} m")
+        self.value_slider_y.setText(f"{st['cy']:.3f} m")
+        self.value_slider_rot.setText(f"{st['angle']:.1f}°")
+
+    def _sync_sliders_from_state(self) -> None:
+        if not self.object_states or self.current_object_index < 0:
+            self._update_slider_value_labels()
+            return
+        state = self.object_states[self.current_object_index]
+        cx = int(round(max(-0.5, min(1.0, state["cx"])) * 1000))
+        cy = int(round(max(-0.75, min(0.75, state["cy"])) * 1000))
+        angle = max(-360.0, min(360.0, float(state["angle"])))
+        rot = int(round(angle * 10))
+        for s, v in (
+            (self.slider_x, cx),
+            (self.slider_y, cy),
+            (self.slider_rot, rot),
+        ):
+            s.blockSignals(True)
+            s.setValue(v)
+            s.blockSignals(False)
+        self._update_slider_value_labels()
+
+    def on_slider_x_changed(self, value: int) -> None:
+        if self.object_states and self.current_object_index >= 0:
+            self.object_states[self.current_object_index]["cx"] = value / 1000.0
+        self._update_slider_value_labels()
         self.update_plot()
 
-    def on_x_plus(self):
+    def on_slider_y_changed(self, value: int) -> None:
         if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["cx"] += 0.05
+            self.object_states[self.current_object_index]["cy"] = value / 1000.0
+        self._update_slider_value_labels()
         self.update_plot()
 
-    def on_x_minus(self):
+    def on_slider_rot_changed(self, value: int) -> None:
         if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["cx"] -= 0.05
+            self.object_states[self.current_object_index]["angle"] = value / 10.0
+        self._update_slider_value_labels()
         self.update_plot()
 
-    def on_y_plus(self):
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["cy"] += 0.05
-        self.update_plot()
+    def _populate_object_combo(self) -> None:
+        self.combo_object.blockSignals(True)
+        self.combo_object.clear()
+        for state in self.object_states:
+            self.combo_object.addItem(state["name"])
+        if self.object_states:
+            idx = max(0, min(self.current_object_index, len(self.object_states) - 1))
+            self.current_object_index = idx
+            self.combo_object.setCurrentIndex(idx)
+        self.combo_object.blockSignals(False)
 
-    def on_y_minus(self):
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["cy"] -= 0.05
-        self.update_plot()
-
-    def on_rot_plus(self):
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["angle"] += 10
-        self.update_plot()
-
-    def on_rot_minus(self):
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["angle"] -= 10
+    def on_object_combo_changed(self, index: int) -> None:
+        if index < 0 or not self.object_states:
+            return
+        self.current_object_index = index
+        self._sync_sliders_from_state()
         self.update_plot()
 
 
