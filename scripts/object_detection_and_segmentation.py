@@ -23,7 +23,7 @@ def _extract_json(text: str):
         try:
             return text.split("```json")[1].split("```")[0].strip()
         except IndexError:
-            pass  # fallback below
+            pass
 
     return text.strip()
 
@@ -91,9 +91,7 @@ def generate_gemini_mask(
     return bounding_boxes, labels
 
 
-def scan_for_objects(
-    img: Image.Image, masks_folder: str = "/home/yufeiyang/Documents/BundleSDF/assets/"
-) -> List[str]:
+def scan_objects(img: Image.Image, masks_folder: str) -> List[str]:
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     object_library = [
         "A_shape_video",
@@ -140,8 +138,10 @@ def scan_for_objects(
         mask_img = Image.fromarray(mask.astype("uint8") * 255, mode="L")
         mask_img.save(f"{masks_folder}/mask_{object_name}.png")
 
+    return object_names
+
 
 if __name__ == "__main__":
     img = Image.open("/Users/hienbui/git/sam3/scripts/realsense_capture.jpg")
     folder = "/Users/hienbui/Downloads/"
-    scan_for_objects(img, folder)
+    scan_objects(img, folder)
