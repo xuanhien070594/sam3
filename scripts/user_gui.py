@@ -18,6 +18,9 @@ from shapely.geometry import Polygon
 import math
 import matplotlib.patches as patches
 
+from gui_publisher import TargetPublisher
+import psutil
+
 base_dir = os.path.dirname(os.path.abspath(__file__))
 image_path = os.path.join(base_dir, "test_image_1.jpg")
 
@@ -145,6 +148,8 @@ class InteractiveImageGUI(QWidget):
         gui_state_path = os.path.join(base_dir, "gui_state.txt")
         with open(gui_state_path, "w") as f:
             f.write("started")
+
+        # self.publisher = TargetPublisher()
 
     def on_mouse_move(self, event):
         if event.inaxes is None:
@@ -370,9 +375,44 @@ class InteractiveImageGUI(QWidget):
         with open(gui_state_path, "w") as f:
             f.write("finished")
         self.close()
-        QApplication.quit()
+        QApplication.quit()    
 
-        # TODO add continuous mode flag
+
+
+        # publisher target positions
+        # obj_names = [state['name'] for state in self.object_states]
+        # positions = [(state['cx'], state['cy']) for state in self.object_states]
+        position_mat = []
+        for pos in self.object_states:
+            obj_publisher = TargetPublisher(pos['name'])
+            print("pose", pos)
+            mat = convert_to_matrix(pos)
+            position_mat.append(mat)
+            obj_publisher.publish_target(obj_name=pos['name'], pose=mat, control_mode=0)
+
+
+        # List of script filenames you want to stop
+        targets = [
+            "auto_tracking_gui.py",
+            "fpTracking_share3.py",
+            "camera_memory.py"
+        ]
+
+        for proc in psutil.process_iter(['pid', 'cmdline']):
+            try:
+                if not proc.info['cmdline']:
+                    continue
+                cmdline = " ".join(proc.info['cmdline'])
+                for target in targets:
+                    if target in cmdline:
+                        print(f"Killing PID {proc.pid}: {cmdline}")
+                        proc.kill()
+                        break  # stop checking other targets for this process
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        # 
+
 
     def update_plot(self):
         self.canvas.figure.clear()
@@ -476,6 +516,20 @@ class InteractiveImageGUI(QWidget):
         #     points_in_world.append(pt_world[:3])  # take x, y, z
         # print("Selected goals in world coordinates:", points_in_world)
         return points_in_world
+    
+def convert_to_matrix(object_state):
+    cx, cy = object_state['cx'], object_state['cy']
+    angle_rad = math.radians(object_state['angle'])
+    cos_a = math.cos(angle_rad)
+    sin_a = math.sin(angle_rad)
+    # Construct homogeneous transformation matrix
+    matrix = np.array([
+        [cos_a, -sin_a, 0, cx],
+        [sin_a,  cos_a, 0, cy],
+        [0,      0,     1, 0],
+        [0,      0,     0, 1]
+    ])
+    return matrix
 
 def get_transform(base_path):
     # check if this is a valid path

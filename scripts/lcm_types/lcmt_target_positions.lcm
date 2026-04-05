@@ -1,0 +1,10 @@
+package lcmt_target_positions;
+
+struct lcmt_target_positions {
+    int64_t timestamp;
+    int32_t num_positions;
+    string name;
+    int8_t continuous_mode;
+    double position[num_positions];
+    string position_names[num_positions];
+}
