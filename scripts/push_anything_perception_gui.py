@@ -42,6 +42,24 @@ OBJECT_EDGE_COLORS = (
 
 WORKSPACE_X_LIMIT = (0.372, 0.625)
 WORKSPACE_Y_LIMIT = (-0.38, 0.38)
+OBJECT_NAME_MAPPING = {
+    "I_shape_video": "Letter I",
+    "R_shape_video": "Letter R",
+    "D_shape_video": "Letter D",
+    "A_shape_video": "Letter A",
+}
+
+
+def _display_object_name(codename: str) -> str:
+    return OBJECT_NAME_MAPPING.get(codename, codename)
+
+
+# Matplotlib plot typography (data coordinates / axis labels)
+PLOT_FONTSIZE_TITLE = 13
+PLOT_FONTSIZE_OBJECT_LABEL = 12
+PLOT_FONTSIZE_AXES = 11
+PLOT_FONTSIZE_ROBOT_AXIS = 12
+PLOT_FONTSIZE_ROBOT_CAPTION = 11
 
 
 class InteractiveImageGUI(QWidget):
@@ -89,6 +107,9 @@ class InteractiveImageGUI(QWidget):
             _b.setFont(_primary_font)
             _b.setMinimumHeight(46)
             _b.setMinimumWidth(175)
+        # Select Goals: only after a completed Scan. Start Pushing: after Select Goals + valid goals.
+        self.btn2.setEnabled(False)
+        self.btn3.setEnabled(False)
 
         self.slider_x = QSlider(Qt.Horizontal)
         self.slider_y = QSlider(Qt.Horizontal)
@@ -297,8 +318,8 @@ class InteractiveImageGUI(QWidget):
                 if poly1.intersects(poly2) or poly1.distance(poly2) < 1e-6:
                     logger.warning(
                         "Overlap detected between {} and {}",
-                        state1["name"],
-                        state2["name"],
+                        _display_object_name(state1["name"]),
+                        _display_object_name(state2["name"]),
                     )
                     return True
 
@@ -319,7 +340,7 @@ class InteractiveImageGUI(QWidget):
                 if not (wx0 <= x <= wx1 and wy0 <= y <= wy1):
                     logger.warning(
                         "Goal for '{}' outside workspace (corner {:.4f}, {:.4f})",
-                        state["name"],
+                        _display_object_name(state["name"]),
                         x,
                         y,
                     )
@@ -328,6 +349,8 @@ class InteractiveImageGUI(QWidget):
 
     def on_scan(self) -> None:
         logger.info("User pressed Scan button")
+        self.btn2.setEnabled(False)
+        self.btn3.setEnabled(False)
         img_rgb: Optional[np.ndarray] = None
         if rs is not None:
             img_rgb = self._capture_realsense_frame()
@@ -364,6 +387,8 @@ class InteractiveImageGUI(QWidget):
         except Exception as e:
             logger.exception("scan_objects failed: {}", e)
             self.current_detected_objects = []
+
+        self.btn2.setEnabled(True)
 
         # subprocess.Popen(
         #     [sys.executable, self.auto_tracking_gui_path],
@@ -468,7 +493,7 @@ class InteractiveImageGUI(QWidget):
             for state in self.object_states:
                 logger.info(
                     "Object '{}' goal center: ({:.4f}, {:.4f}), goal angle: {:.2f}°",
-                    state["name"],
+                    _display_object_name(state["name"]),
                     state["goal_cx"],
                     state["goal_cy"],
                     state["goal_angle"],
@@ -485,6 +510,7 @@ class InteractiveImageGUI(QWidget):
         self.canvas.figure.clear()
         if self.object_states:
             ax = self.canvas.figure.add_subplot(111)
+            ax.tick_params(axis="both", which="major", labelsize=PLOT_FONTSIZE_AXES)
             wx0, wx1 = WORKSPACE_X_LIMIT
             wy0, wy1 = WORKSPACE_Y_LIMIT
             workspace_rect = patches.Rectangle(
@@ -536,17 +562,18 @@ class InteractiveImageGUI(QWidget):
                 ax.text(
                     gcx,
                     gcy,
-                    state["name"],
+                    _display_object_name(state["name"]),
                     ha="center",
                     va="center",
-                    fontsize=8,
+                    fontsize=PLOT_FONTSIZE_OBJECT_LABEL,
                     color=color,
                 )
             ax.set_xlim(0, 0.8)
             ax.set_ylim(-0.5, 0.5)
             ax.set_aspect("equal")
             ax.set_title(
-                "Objects: solid = current, dashed = goal (fixed color per object)"
+                "Objects: solid = current, dashed = goal (fixed color per object)",
+                fontsize=PLOT_FONTSIZE_TITLE,
             )
             self._annotate_robot_frame(ax)
 
@@ -565,8 +592,11 @@ class InteractiveImageGUI(QWidget):
                 self.warning_label.hide()
                 self.valid_goals_label.setText("Selected goals are valid.")
                 self.valid_goals_label.show()
+            # Start Pushing: only when goals exist, in workspace, and not overlapping.
+            self.btn3.setEnabled(not goals_overlap and not goals_outside_ws)
         else:
             ax = self.canvas.figure.add_subplot(111)
+            ax.tick_params(axis="both", which="major", labelsize=PLOT_FONTSIZE_AXES)
             ax.text(
                 0.5,
                 0.5,
@@ -574,10 +604,12 @@ class InteractiveImageGUI(QWidget):
                 ha="center",
                 va="center",
                 transform=ax.transAxes,
+                fontsize=PLOT_FONTSIZE_OBJECT_LABEL,
             )
-            ax.set_title("No Data")
+            ax.set_title("No Data", fontsize=PLOT_FONTSIZE_TITLE)
             self.warning_label.hide()
             self.valid_goals_label.hide()
+            self.btn3.setEnabled(False)
         self._apply_figure_margins()
         self.canvas.draw()
 
@@ -613,7 +645,7 @@ class InteractiveImageGUI(QWidget):
             L + 0.02,
             0.0,
             "x",
-            fontsize=10,
+            fontsize=PLOT_FONTSIZE_ROBOT_AXIS,
             color="darkred",
             zorder=z,
             va="center",
@@ -623,7 +655,7 @@ class InteractiveImageGUI(QWidget):
             0.02,
             L + 0.02,
             "y",
-            fontsize=10,
+            fontsize=PLOT_FONTSIZE_ROBOT_AXIS,
             color="darkgreen",
             zorder=z,
             ha="center",
@@ -634,7 +666,7 @@ class InteractiveImageGUI(QWidget):
             0.02,
             -0.06,
             "Robot Frame",
-            fontsize=9,
+            fontsize=PLOT_FONTSIZE_ROBOT_CAPTION,
             color="black",
             zorder=z,
             ha="left",
@@ -697,7 +729,7 @@ class InteractiveImageGUI(QWidget):
         self.combo_object.blockSignals(True)
         self.combo_object.clear()
         for state in self.object_states:
-            self.combo_object.addItem(state["name"])
+            self.combo_object.addItem(_display_object_name(state["name"]))
         if self.object_states:
             idx = max(0, min(self.current_object_index, len(self.object_states) - 1))
             self.current_object_index = idx
