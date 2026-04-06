@@ -32,6 +32,7 @@ from loguru import logger
 from PIL import Image
 
 from object_detection_and_segmentation import scan_objects
+from target_poses_publisher import TargetPosesPublisher
 
 # One color per object (by order in the scene); used for both current and goal boxes.
 OBJECT_EDGE_COLORS = (
@@ -63,6 +64,12 @@ OBJECT_NAME_MAPPING = {
 
 def _display_object_name(codename: str) -> str:
     return OBJECT_NAME_MAPPING.get(codename, codename)
+
+
+def _goal_angle_deg_to_quat_wxyz(angle_deg: float) -> np.ndarray:
+    """Planar rotation about robot +Z; quaternion [w, x, y, z]."""
+    half = np.deg2rad(float(angle_deg)) * 0.5
+    return np.array([np.cos(half), 0.0, 0.0, np.sin(half)], dtype=np.float64)
 
 
 # Matplotlib plot typography (data coordinates / axis labels)
@@ -286,6 +293,7 @@ class InteractiveImageGUI(QWidget):
         self._scanning_ui_active = False
         self._scan_chrome_visibility_backup: Dict[Any, bool] = {}
         self._scan_stretch_backup: Optional[Tuple[int, int]] = None
+        self.target_poses_publisher = TargetPosesPublisher()
 
     def _scan_chrome_widgets(self):
         """Secondary controls hidden during scan (main buttons + Single Goal Mode stay visible)."""
@@ -751,6 +759,24 @@ class InteractiveImageGUI(QWidget):
         self._sync_sliders_from_state()
         self.update_plot()
 
+    def _publish_target_poses_gui(self, goal_mode: int) -> None:
+        obj_names = [s["name"] for s in self.object_states]
+        obj_positions = [
+            np.array([s["goal_cx"], s["goal_cy"]], dtype=np.float64)
+            for s in self.object_states
+        ]
+        obj_orientations = [
+            _goal_angle_deg_to_quat_wxyz(s["goal_angle"]) for s in self.object_states
+        ]
+        self.target_poses_publisher.publish_target(
+            obj_names, obj_positions, obj_orientations, goal_mode
+        )
+        logger.info(
+            "Published TARGET_POSES_GUI for {} object(s), goal_mode={}.",
+            len(obj_names),
+            goal_mode,
+        )
+
     def on_send_to_controller(self):
         logger.info("Send to Controller button pressed")
         if not self.object_states:
@@ -774,8 +800,9 @@ class InteractiveImageGUI(QWidget):
             return
 
         goal_mode = 2 if self.checkbox_single_goal_mode.isChecked() else 0
+
+        # Print the goal states for debugging
         for state in self.object_states:
-            state["goal_mode"] = goal_mode
             logger.info(
                 "Object '{}' goal center: ({:.4f}, {:.4f}), goal angle: {:.2f}°, goal_mode: {}",
                 _display_object_name(state["name"]),
@@ -784,7 +811,8 @@ class InteractiveImageGUI(QWidget):
                 state["goal_angle"],
                 goal_mode,
             )
-            logger.info("{}", state)
+
+        self._publish_target_poses_gui(goal_mode)
 
     def update_plot(self):
         ax_left, ax = self._figure_dual_axes()

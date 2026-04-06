@@ -1,0 +1,10 @@
+package lcmt_target_poses_gui;
+
+struct lcmt_target_poses_gui {
+    int64_t timestamp;
+    int32_t num_objects;
+    int8_t goal_mode;
+    double target_positions[num_objects][2];
+    double target_orientations[num_objects][4];
+    string object_names[num_objects];
+}
