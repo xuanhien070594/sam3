@@ -53,11 +53,6 @@ def _robot_xy_to_plot_xy(rx: float, ry: float) -> Tuple[float, float]:
     return ry, rx
 
 
-def _robot_angle_to_plot_angle_deg(angle_deg: float) -> float:
-    """Matplotlib patch angle for the same box pose in robot frame (pairs with invert_yaxis)."""
-    return 90.0 - angle_deg
-
-
 OBJECT_NAME_MAPPING = {
     "I_shape_video": "Letter I",
     "R_shape_video": "Letter R",
@@ -401,6 +396,16 @@ class InteractiveImageGUI(QWidget):
         tr = rect.get_transform()
         corners = tr.transform(path.vertices)[:4]
         return corners
+
+    def _rect_polygon_plot_xy(
+        self, cx: float, cy: float, w: float, h: float, angle_deg: float
+    ) -> np.ndarray:
+        """Closed bounding box in plot coords; same geometry as overlap checks (robot frame → plot)."""
+        corners = self._rect_corners(cx, cy, w, h, angle_deg)
+        return np.array(
+            [_robot_xy_to_plot_xy(float(p[0]), float(p[1])) for p in corners],
+            dtype=float,
+        )
 
     def check_overlap(self):
         for i in range(len(self.object_states)):
@@ -804,34 +809,26 @@ class InteractiveImageGUI(QWidget):
                     state["goal_cy"],
                     state["goal_angle"],
                 )
-                pccx, pccy = _robot_xy_to_plot_xy(ccx, ccy)
                 pgcx, pgcy = _robot_xy_to_plot_xy(gcx, gcy)
-                pcang = _robot_angle_to_plot_angle_deg(cang)
-                pgang = _robot_angle_to_plot_angle_deg(gang)
-                # Width along plot x = robot Y; height along plot y = robot X (see invert_yaxis).
-                rect_current = patches.Rectangle(
-                    (pccx - dims[1] / 2, pccy - dims[0] / 2),
-                    dims[1],
-                    dims[0],
+                # Polygon from robot-frame corners: swap (y,x) is orientation-reversing, so a single
+                # matplotlib Rectangle angle cannot match both edges; reuse _rect_corners geometry.
+                rect_current = patches.Polygon(
+                    self._rect_polygon_plot_xy(ccx, ccy, dims[0], dims[1], cang),
                     linewidth=1.5,
                     edgecolor=color,
                     facecolor="none",
-                    angle=pcang,
-                    rotation_point="center",
                     linestyle="-",
+                    closed=True,
                     zorder=3,
                 )
                 ax.add_patch(rect_current)
-                rect_goal = patches.Rectangle(
-                    (pgcx - dims[1] / 2, pgcy - dims[0] / 2),
-                    dims[1],
-                    dims[0],
+                rect_goal = patches.Polygon(
+                    self._rect_polygon_plot_xy(gcx, gcy, dims[0], dims[1], gang),
                     linewidth=2,
                     edgecolor=color,
                     facecolor="none",
-                    angle=pgang,
-                    rotation_point="center",
                     linestyle=":",
+                    closed=True,
                     zorder=4,
                 )
                 ax.add_patch(rect_goal)
@@ -920,8 +917,8 @@ class InteractiveImageGUI(QWidget):
             )
         )
         ax.text(
-            L + 0.02,
-            0.0,
+            L,
+            0.02,
             "y",
             fontsize=PLOT_FONTSIZE_ROBOT_AXIS,
             color="darkgreen",
