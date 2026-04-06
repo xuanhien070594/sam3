@@ -42,6 +42,22 @@ OBJECT_EDGE_COLORS = (
 
 WORKSPACE_X_LIMIT = (0.372, 0.625)
 WORKSPACE_Y_LIMIT = (-0.38, 0.38)
+
+# Plot: robot +Y → +plot x; robot +X → downward on screen via invert_yaxis (py = rx > 0).
+PLOT_XLIM = (0.0, 0.8)  # robot X → plot y (positive ticks)
+PLOT_YLIM = (-0.5, 0.5)  # robot Y → plot x
+
+
+def _robot_xy_to_plot_xy(rx: float, ry: float) -> Tuple[float, float]:
+    """Map robot (x, y) to plot data coords; call invert_yaxis on the axes so +robot X is down."""
+    return ry, rx
+
+
+def _robot_angle_to_plot_angle_deg(angle_deg: float) -> float:
+    """Matplotlib patch angle for the same box pose in robot frame (pairs with invert_yaxis)."""
+    return 90.0 - angle_deg
+
+
 OBJECT_NAME_MAPPING = {
     "I_shape_video": "Letter I",
     "R_shape_video": "Letter R",
@@ -84,8 +100,8 @@ class InteractiveImageGUI(QWidget):
         self.foundation_pose_dir = "/Users/hienbui/Downloads"
         self.masks_dir = "/Users/hienbui/Downloads"
 
-        self.setWindowTitle("Interactive Image GUI")
-        self.resize(1200, 1500)
+        self.setWindowTitle("Push Anything Perception GUI")
+        self.resize(2000, 1500)
 
         # --- Main layout ---
         main_layout = QVBoxLayout()
@@ -767,10 +783,11 @@ class InteractiveImageGUI(QWidget):
             ax.tick_params(axis="both", which="major", labelsize=PLOT_FONTSIZE_AXES)
             wx0, wx1 = WORKSPACE_X_LIMIT
             wy0, wy1 = WORKSPACE_Y_LIMIT
+            # Workspace in plot: (plot_x, plot_y) = (robot_y, robot_x); y-axis inverted for display.
             workspace_rect = patches.Rectangle(
-                (wx0, wy0),
-                wx1 - wx0,
+                (wy0, wx0),
                 wy1 - wy0,
+                wx1 - wx0,
                 linewidth=1.5,
                 edgecolor="black",
                 facecolor="none",
@@ -787,43 +804,49 @@ class InteractiveImageGUI(QWidget):
                     state["goal_cy"],
                     state["goal_angle"],
                 )
+                pccx, pccy = _robot_xy_to_plot_xy(ccx, ccy)
+                pgcx, pgcy = _robot_xy_to_plot_xy(gcx, gcy)
+                pcang = _robot_angle_to_plot_angle_deg(cang)
+                pgang = _robot_angle_to_plot_angle_deg(gang)
+                # Width along plot x = robot Y; height along plot y = robot X (see invert_yaxis).
                 rect_current = patches.Rectangle(
-                    (ccx - dims[0] / 2, ccy - dims[1] / 2),
-                    dims[0],
+                    (pccx - dims[1] / 2, pccy - dims[0] / 2),
                     dims[1],
+                    dims[0],
                     linewidth=1.5,
                     edgecolor=color,
                     facecolor="none",
-                    angle=cang,
+                    angle=pcang,
                     rotation_point="center",
                     linestyle="-",
                     zorder=3,
                 )
                 ax.add_patch(rect_current)
                 rect_goal = patches.Rectangle(
-                    (gcx - dims[0] / 2, gcy - dims[1] / 2),
-                    dims[0],
+                    (pgcx - dims[1] / 2, pgcy - dims[0] / 2),
                     dims[1],
+                    dims[0],
                     linewidth=2,
                     edgecolor=color,
                     facecolor="none",
-                    angle=gang,
+                    angle=pgang,
                     rotation_point="center",
                     linestyle=":",
                     zorder=4,
                 )
                 ax.add_patch(rect_goal)
                 ax.text(
-                    gcx,
-                    gcy,
+                    pgcx,
+                    pgcy,
                     _display_object_name(state["name"]),
                     ha="center",
                     va="center",
                     fontsize=PLOT_FONTSIZE_OBJECT_LABEL,
                     color=color,
                 )
-            ax.set_xlim(0, 0.8)
-            ax.set_ylim(-0.5, 0.5)
+            ax.set_xlim(PLOT_YLIM[0], PLOT_YLIM[1])
+            ax.set_ylim(PLOT_XLIM[0], PLOT_XLIM[1])
+            ax.invert_yaxis()
             ax.set_aspect("equal")
             ax.set_title(
                 "Goals: solid = current, dotted = goal",
@@ -867,10 +890,10 @@ class InteractiveImageGUI(QWidget):
         self.canvas.draw()
 
     def _annotate_robot_frame(self, ax) -> None:
-        """Draw XY robot triad at origin (Z omitted); 2D plot is the X–Y plane."""
+        """Draw XY triad at origin: robot +Y right, robot +X down (Z omitted)."""
         L = 0.12
         z = 10
-        # clip_on=False: vertical arrow sits on x=0; arrowhead can extend past the left spine and was clipped.
+        # clip_on=False: arrows/labels may extend past spines.
         kw = dict(
             arrowstyle="->",
             mutation_scale=18,
@@ -878,28 +901,30 @@ class InteractiveImageGUI(QWidget):
             zorder=z,
             clip_on=False,
         )
+        # Robot +Y → plot +x (to the right)
         ax.add_patch(
             patches.FancyArrowPatch(
                 (0.0, 0.0),
                 (L, 0.0),
-                color="darkred",
+                color="darkgreen",
                 **kw,
             )
         )
+        # Robot +X → +plot y (displays downward after invert_yaxis)
         ax.add_patch(
             patches.FancyArrowPatch(
                 (0.0, 0.0),
                 (0.0, L),
-                color="darkgreen",
+                color="darkred",
                 **kw,
             )
         )
         ax.text(
             L + 0.02,
             0.0,
-            "x",
+            "y",
             fontsize=PLOT_FONTSIZE_ROBOT_AXIS,
-            color="darkred",
+            color="darkgreen",
             zorder=z,
             va="center",
             clip_on=False,
@@ -907,9 +932,9 @@ class InteractiveImageGUI(QWidget):
         ax.text(
             0.02,
             L + 0.02,
-            "y",
+            "x",
             fontsize=PLOT_FONTSIZE_ROBOT_AXIS,
-            color="darkgreen",
+            color="darkred",
             zorder=z,
             ha="center",
             va="bottom",
@@ -917,7 +942,7 @@ class InteractiveImageGUI(QWidget):
         )
         ax.text(
             0.02,
-            -0.06,
+            0.06,
             "Robot Frame",
             fontsize=PLOT_FONTSIZE_ROBOT_CAPTION,
             color="black",
