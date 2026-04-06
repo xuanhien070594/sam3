@@ -126,10 +126,13 @@ class InteractiveImageGUI(QWidget):
         self.slider_x.setSingleStep(10)
         self.slider_y.setSingleStep(10)
         self.slider_rot.setSingleStep(10)
+        _slider_track_w = 500
         for _s in (self.slider_x, self.slider_y, self.slider_rot):
             # Enough height so the handle is not clipped in tight rows (esp. macOS)
             _s.setMinimumHeight(36)
-            _s.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            # Max width alone does not grow the slider — Preferred uses a small hint; fix the track size.
+            _s.setFixedWidth(_slider_track_w)
+            _s.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
         self.label_object = QLabel("Object: ")
         self.label_object.setFont(_primary_font)
@@ -206,16 +209,19 @@ class InteractiveImageGUI(QWidget):
 
         row_x = QHBoxLayout()
         row_x.addWidget(self.label_slider_x)
-        row_x.addWidget(self.slider_x, 1)
+        row_x.addWidget(self.slider_x, 0)
         row_x.addWidget(self.value_slider_x)
+        row_x.addStretch(1)
         row_y = QHBoxLayout()
         row_y.addWidget(self.label_slider_y)
-        row_y.addWidget(self.slider_y, 1)
+        row_y.addWidget(self.slider_y, 0)
         row_y.addWidget(self.value_slider_y)
+        row_y.addStretch(1)
         row_rot = QHBoxLayout()
         row_rot.addWidget(self.label_slider_rot)
-        row_rot.addWidget(self.slider_rot, 1)
+        row_rot.addWidget(self.slider_rot, 0)
         row_rot.addWidget(self.value_slider_rot)
+        row_rot.addStretch(1)
         for _row in (row_x, row_y, row_rot):
             _row.setContentsMargins(0, 4, 0, 4)
 
