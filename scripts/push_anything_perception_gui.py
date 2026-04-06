@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QSizePolicy,
+    QMessageBox,
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
@@ -96,6 +97,7 @@ class InteractiveImageGUI(QWidget):
         self.btn3 = QPushButton("Send Goals to Controller")
         _primary_font = QFont()
         _primary_font.setPointSize(15)
+        self._primary_font = _primary_font
         for _b in (self.btn1, self.btn2, self.btn3):
             _b.setFont(_primary_font)
             _b.setMinimumHeight(46)
@@ -119,13 +121,16 @@ class InteractiveImageGUI(QWidget):
             _s.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.label_object = QLabel("Object: ")
+        self.label_object.setFont(_primary_font)
+        self.label_object.setMinimumHeight(46)
+        self.label_object.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.combo_object = QComboBox()
         self.combo_object.setMinimumWidth(200)
+        self.combo_object.setFont(_primary_font)
+        self.combo_object.setMinimumHeight(46)
         self.btn_reset_goals = QPushButton("Reset Goals")
-        _reset_font = QFont()
-        _reset_font.setPointSize(13)
-        self.btn_reset_goals.setFont(_reset_font)
-        self.btn_reset_goals.setMinimumHeight(32)
+        self.btn_reset_goals.setFont(_primary_font)
+        self.btn_reset_goals.setMinimumHeight(46)
         self.btn_reset_goals.clicked.connect(self.on_reset_goals)
 
         self.checkbox_single_goal_mode = QCheckBox("Single Goal Mode")
@@ -173,6 +178,17 @@ class InteractiveImageGUI(QWidget):
         self.value_slider_x = QLabel("")
         self.value_slider_y = QLabel("")
         self.value_slider_rot = QLabel("")
+        for w in (
+            self.label_slider_x,
+            self.label_slider_y,
+            self.label_slider_rot,
+            self.value_slider_x,
+            self.value_slider_y,
+            self.value_slider_rot,
+        ):
+            w.setFont(_primary_font)
+        for w in (self.label_slider_x, self.label_slider_y, self.label_slider_rot):
+            w.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         for w in (self.value_slider_x, self.value_slider_y, self.value_slider_rot):
             w.setMinimumWidth(88)
             w.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -709,23 +725,39 @@ class InteractiveImageGUI(QWidget):
         self.update_plot()
 
     def on_send_to_controller(self):
-        # close the window and exit the app
         logger.info("Send to Controller button pressed")
-        if self.object_states:
-            goal_mode = 2 if self.checkbox_single_goal_mode.isChecked() else 0
-            for state in self.object_states:
-                state["goal_mode"] = goal_mode
-                logger.info(
-                    "Object '{}' goal center: ({:.4f}, {:.4f}), goal angle: {:.2f}°, goal_mode: {}",
-                    _display_object_name(state["name"]),
-                    state["goal_cx"],
-                    state["goal_cy"],
-                    state["goal_angle"],
-                    goal_mode,
-                )
-                logger.info("{}", state)
-        else:
+        if not self.object_states:
             logger.warning("No object states available to push.")
+            return
+
+        confirm = QMessageBox(self)
+        confirm.setFont(self._primary_font)
+        confirm.setWindowTitle("Confirm send to controller")
+        confirm.setText(
+            "Send detections and goal poses to the controller computer? "
+            "Confirm only when Franka is not running."
+        )
+        confirm.setIcon(QMessageBox.Question)
+        btn_send = confirm.addButton("✓", QMessageBox.AcceptRole)
+        confirm.addButton("✗", QMessageBox.RejectRole)
+        confirm.setDefaultButton(btn_send)
+        confirm.exec_()
+        if confirm.clickedButton() != btn_send:
+            logger.info("Send to controller cancelled by user")
+            return
+
+        goal_mode = 2 if self.checkbox_single_goal_mode.isChecked() else 0
+        for state in self.object_states:
+            state["goal_mode"] = goal_mode
+            logger.info(
+                "Object '{}' goal center: ({:.4f}, {:.4f}), goal angle: {:.2f}°, goal_mode: {}",
+                _display_object_name(state["name"]),
+                state["goal_cx"],
+                state["goal_cy"],
+                state["goal_angle"],
+                goal_mode,
+            )
+            logger.info("{}", state)
 
     def update_plot(self):
         ax_left, ax = self._figure_dual_axes()
@@ -777,7 +809,7 @@ class InteractiveImageGUI(QWidget):
                     facecolor="none",
                     angle=gang,
                     rotation_point="center",
-                    linestyle="--",
+                    linestyle=":",
                     zorder=4,
                 )
                 ax.add_patch(rect_goal)
@@ -794,7 +826,7 @@ class InteractiveImageGUI(QWidget):
             ax.set_ylim(-0.5, 0.5)
             ax.set_aspect("equal")
             ax.set_title(
-                "Goals: solid = current, dashed = goal",
+                "Goals: solid = current, dotted = goal",
                 fontsize=PLOT_FONTSIZE_TITLE,
             )
             self._annotate_robot_frame(ax)
