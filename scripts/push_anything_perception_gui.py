@@ -33,6 +33,7 @@ import matplotlib.patches as patches
 from loguru import logger
 from PIL import Image
 
+from object_detection_and_segmentation import scan_objects
 from target_poses_publisher import TargetPosesPublisher
 
 # One color per object (by order in the scene); used for both current and goal boxes.
@@ -634,8 +635,6 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def on_scan(self) -> None:
         logger.info("User pressed Scan button")
-        from object_detection_and_segmentation import scan_objects
-
         self._kill_existing_tracking_processes()
 
         img_rgb: Optional[np.ndarray] = None
