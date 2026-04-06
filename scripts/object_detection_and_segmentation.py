@@ -91,13 +91,22 @@ def generate_gemini_mask(
     return bounding_boxes, labels
 
 
-def scan_objects(img: Image.Image, masks_folder: str) -> Tuple[List[str], List[List[int]]]:
+def scan_objects(
+    img: Image.Image, masks_folder: str
+) -> Tuple[List[str], List[List[int]]]:
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     object_library = [
         "A_shape_video",
+        "B_shape_video",
+        "D_shape_video",
+        "E_shape_video",
         "I_shape_video",
         "R_shape_video",
-        "D_shape_video",
+        "S_shape_video",
+        "3_shape_video",
+        "baby_toy",
+        "book",
+        "tape",
     ]
 
     # Load SAM3 model

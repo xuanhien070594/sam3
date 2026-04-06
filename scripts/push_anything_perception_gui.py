@@ -59,6 +59,14 @@ OBJECT_NAME_MAPPING = {
     "R_shape_video": "Letter R",
     "D_shape_video": "Letter D",
     "A_shape_video": "Letter A",
+    "B_shape_video": "Letter B",
+    "D_shape_video": "Letter D",
+    "E_shape_video": "Letter E",
+    "S_shape_video": "Letter S",
+    "3_shape_video": "Number 3",
+    "baby_toy": "Baby Toy",
+    "book": "Book",
+    "tape": "Tape",
 }
 
 
@@ -112,7 +120,7 @@ class InteractiveImageGUI(QWidget):
         button_layout = QHBoxLayout()
         self.btn1 = QPushButton("Scan")
         self.btn2 = QPushButton("Select Goals")
-        self.btn3 = QPushButton("Send Goals to Controller")
+        self.btn3 = QPushButton("Send Goals")
         _primary_font = QFont()
         _primary_font.setPointSize(15)
         self._primary_font = _primary_font
@@ -120,7 +128,7 @@ class InteractiveImageGUI(QWidget):
             _b.setFont(_primary_font)
             _b.setMinimumHeight(46)
             _b.setMinimumWidth(175)
-        # Select Goals: only after a completed Scan. Send Goals to Controller: after Select Goals + valid goals.
+        # Select Goals: only after a completed Scan. Send Goals: after Select Goals + valid goals.
         self.btn2.setEnabled(False)
         self.btn3.setEnabled(False)
 
@@ -778,7 +786,7 @@ class InteractiveImageGUI(QWidget):
         )
 
     def on_send_to_controller(self):
-        logger.info("Send to Controller button pressed")
+        logger.info("Send Goals button pressed")
         if not self.object_states:
             logger.warning("No object states available to push.")
             return
