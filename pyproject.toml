@@ -57,7 +57,8 @@ dev = [
     "trimesh",
     "shapely",
     "loguru",
-    "lcm"
+    "lcm",
+    "pyrealsense2",
 ]
 notebooks = [
     "matplotlib",

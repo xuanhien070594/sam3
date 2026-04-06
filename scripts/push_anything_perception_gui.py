@@ -18,6 +18,8 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 import numpy as np
 import trimesh
+import psutil
+import subprocess
 
 try:
     import pyrealsense2 as rs
@@ -31,7 +33,6 @@ import matplotlib.patches as patches
 from loguru import logger
 from PIL import Image
 
-from object_detection_and_segmentation import scan_objects
 from target_poses_publisher import TargetPosesPublisher
 
 # One color per object (by order in the scene); used for both current and goal boxes.
@@ -88,7 +89,7 @@ PLOT_FONTSIZE_ROBOT_AXIS = 12
 PLOT_FONTSIZE_ROBOT_CAPTION = 11
 
 
-class InteractiveImageGUI(QWidget):
+class PushAnythingPerceptionGUI(QWidget):
     def __init__(self):
         super().__init__()
 
@@ -101,14 +102,14 @@ class InteractiveImageGUI(QWidget):
         self.auto_tracking_gui_path = os.path.join(
             self.bundle_sdf_dir, "auto_tracking_gui.py"
         )
-        # self.mesh_assets_dir = os.path.join(self.bundle_sdf_dir, "assets_textured")
-        # self.foundation_pose_dir = os.path.join(self.bundle_sdf_dir, "foundationPose")
-        # self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
+        self.mesh_assets_dir = os.path.join(self.bundle_sdf_dir, "assets_textured")
+        self.foundation_pose_dir = os.path.join(self.bundle_sdf_dir, "foundationPose")
+        self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
 
-        # TODO: will be removed once the testings on MacOS are done
-        self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
-        self.foundation_pose_dir = "/Users/hienbui/Downloads"
-        self.masks_dir = "/Users/hienbui/Downloads"
+        # # TODO: will be removed once the testings on MacOS are done
+        # self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
+        # self.foundation_pose_dir = "/Users/hienbui/Downloads"
+        # self.masks_dir = "/Users/hienbui/Downloads"
 
         self.setWindowTitle("Push Anything Perception GUI")
         self.resize(2000, 1500)
@@ -615,8 +616,26 @@ class InteractiveImageGUI(QWidget):
         self.btn2.setEnabled(True)
         self.btn3.setEnabled(False)
 
+    def _kill_existing_tracking_processes(self) -> None:
+        targets = ["auto_tracking_gui.py", "fpTracking_share3.py", "camera_memory.py"]
+
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                if not proc.info["cmdline"]:
+                    continue
+                cmdline = " ".join(proc.info["cmdline"])
+                for target in targets:
+                    if target in cmdline:
+                        print(f"Killing PID {proc.pid}: {cmdline}")
+                        proc.kill()
+                        break  # stop checking other targets for this process
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
     def on_scan(self) -> None:
         logger.info("User pressed Scan button")
+        from object_detection_and_segmentation import scan_objects
+        self._kill_existing_tracking_processes()
 
         img_rgb: Optional[np.ndarray] = None
         if rs is not None:
@@ -641,6 +660,9 @@ class InteractiveImageGUI(QWidget):
             self.current_detected_objects, scan_boxes = scan_objects(
                 pil_img, self.masks_dir
             )
+            with open("/home/yufeiyang/git/sam3/scripts/object_names.txt", "w") as f:
+                for name in self.current_detected_objects:
+                    f.write(name + "\n")
             logger.info(
                 "mask scanning is done, detected objects: {}",
                 self.current_detected_objects,
@@ -672,18 +694,15 @@ class InteractiveImageGUI(QWidget):
         self.canvas.show()
         self.image_label.hide()
 
-        # subprocess.Popen(
-        #     [sys.executable, self.auto_tracking_gui_path],
-        #     cwd=self.bundle_sdf_dir,
-        #     env=os.environ.copy(),
-        # )
-        # # TODO clear existing running foundationpose instances if any
+        subprocess.Popen(
+            [sys.executable, self.auto_tracking_gui_path],
+            cwd=self.bundle_sdf_dir,
+        )
 
     def on_select(self):
         logger.info("User pressed Select Goals button")
         # Load the mesh files and get the bounding box extents (x, y, z size)
         object_dims = []
-        self.current_detected_objects = ["I_shape_video", "R_shape_video"]
         for name in self.current_detected_objects:
             mesh_path = os.path.join(self.mesh_assets_dir, f"{name}.obj")
             if os.path.exists(mesh_path):
@@ -1065,6 +1084,6 @@ class InteractiveImageGUI(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = InteractiveImageGUI()
+    window = PushAnythingPerceptionGUI()
     window.show()
     sys.exit(app.exec_())

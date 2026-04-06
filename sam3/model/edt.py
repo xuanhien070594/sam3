@@ -76,66 +76,66 @@ if HAS_TRITON:
             row_id = tl.program_id(axis=1)
             block_start = (batch_id * height * width) + row_id * width
 
-    # This is a somewhat verbatim implementation of the efficient 1D EDT algorithm described above
-    # It can be applied horizontally or vertically depending if we're doing the first or second stage.
-    # It's parallelized across batch+row (or batch+col if horizontal=False)
-    # TODO: perhaps the implementation can be revisited if/when local gather/scatter become available in triton
-    batch_id = tl.program_id(axis=0)
-    if horizontal:
-        row_id = tl.program_id(axis=1)
-        block_start = (batch_id * height * width) + row_id * width
-        length = width
-        stride = 1
-    else:
-        col_id = tl.program_id(axis=1)
-        block_start = (batch_id * height * width) + col_id
-        length = height
-        stride = width
+        # This is a somewhat verbatim implementation of the efficient 1D EDT algorithm described above
+        # It can be applied horizontally or vertically depending if we're doing the first or second stage.
+        # It's parallelized across batch+row (or batch+col if horizontal=False)
+        # TODO: perhaps the implementation can be revisited if/when local gather/scatter become available in triton
+        batch_id = tl.program_id(axis=0)
+        if horizontal:
+            row_id = tl.program_id(axis=1)
+            block_start = (batch_id * height * width) + row_id * width
+            length = width
+            stride = 1
+        else:
+            col_id = tl.program_id(axis=1)
+            block_start = (batch_id * height * width) + col_id
+            length = height
+            stride = width
 
-    # This will be the index of the right most parabola in the envelope ("the top of the stack")
-    k = 0
-    for q in range(1, length):
-        # Read the function value at the current location. Note that we're doing a singular read, not very efficient
-        cur_input = tl.load(inputs_ptr + block_start + (q * stride))
-        # location of the parabola on top of the stack
-        r = tl.load(v + block_start + (k * stride))
-        # associated boundary
-        z_k = tl.load(z + block_start + (k * stride))
-        # value of the function at the parabola location
-        previous_input = tl.load(inputs_ptr + block_start + (r * stride))
-        # intersection between the two parabolas
-        s = (cur_input - previous_input + q * q - r * r) / (q - r) / 2
-
-        # we'll pop as many parabolas as required
-        while s <= z_k and k - 1 >= 0:
-            k = k - 1
+        # This will be the index of the right most parabola in the envelope ("the top of the stack")
+        k = 0
+        for q in range(1, length):
+            # Read the function value at the current location. Note that we're doing a singular read, not very efficient
+            cur_input = tl.load(inputs_ptr + block_start + (q * stride))
+            # location of the parabola on top of the stack
             r = tl.load(v + block_start + (k * stride))
+            # associated boundary
             z_k = tl.load(z + block_start + (k * stride))
+            # value of the function at the parabola location
             previous_input = tl.load(inputs_ptr + block_start + (r * stride))
+            # intersection between the two parabolas
             s = (cur_input - previous_input + q * q - r * r) / (q - r) / 2
 
-        # Store the new one
-        k = k + 1
-        tl.store(v + block_start + (k * stride), q)
-        tl.store(z + block_start + (k * stride), s)
-        if k + 1 < length:
-            tl.store(z + block_start + ((k + 1) * stride), 1e9)
+            # we'll pop as many parabolas as required
+            while s <= z_k and k - 1 >= 0:
+                k = k - 1
+                r = tl.load(v + block_start + (k * stride))
+                z_k = tl.load(z + block_start + (k * stride))
+                previous_input = tl.load(inputs_ptr + block_start + (r * stride))
+                s = (cur_input - previous_input + q * q - r * r) / (q - r) / 2
 
-    # Last step, we read the envelope to find the min in every location
-    k = 0
-    for q in range(length):
-        while (
-            k + 1 < length
-            and tl.load(
-                z + block_start + ((k + 1) * stride), mask=(k + 1) < length, other=q
-            )
-            < q
-        ):
-            k += 1
-        r = tl.load(v + block_start + (k * stride))
-        d = q - r
-        old_value = tl.load(inputs_ptr + block_start + (r * stride))
-        tl.store(outputs_ptr + block_start + (q * stride), old_value + d * d)
+            # Store the new one
+            k = k + 1
+            tl.store(v + block_start + (k * stride), q)
+            tl.store(z + block_start + (k * stride), s)
+            if k + 1 < length:
+                tl.store(z + block_start + ((k + 1) * stride), 1e9)
+
+        # Last step, we read the envelope to find the min in every location
+        k = 0
+        for q in range(length):
+            while (
+                k + 1 < length
+                and tl.load(
+                    z + block_start + ((k + 1) * stride), mask=(k + 1) < length, other=q
+                )
+                < q
+            ):
+                k += 1
+            r = tl.load(v + block_start + (k * stride))
+            d = q - r
+            old_value = tl.load(inputs_ptr + block_start + (r * stride))
+            tl.store(outputs_ptr + block_start + (q * stride), old_value + d * d)
 
 
 def edt_triton(data: torch.Tensor):
