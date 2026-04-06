@@ -1,6 +1,6 @@
 import sys
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from PyQt5.QtWidgets import (
     QApplication,
     QWidget,
@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSlider,
     QComboBox,
+    QCheckBox,
     QVBoxLayout,
     QHBoxLayout,
     QSizePolicy,
@@ -92,14 +93,14 @@ class InteractiveImageGUI(QWidget):
         button_layout = QHBoxLayout()
         self.btn1 = QPushButton("Scan")
         self.btn2 = QPushButton("Select Goals")
-        self.btn3 = QPushButton("Start Pushing")
+        self.btn3 = QPushButton("Send Goals to Controller")
         _primary_font = QFont()
         _primary_font.setPointSize(15)
         for _b in (self.btn1, self.btn2, self.btn3):
             _b.setFont(_primary_font)
             _b.setMinimumHeight(46)
             _b.setMinimumWidth(175)
-        # Select Goals: only after a completed Scan. Start Pushing: after Select Goals + valid goals.
+        # Select Goals: only after a completed Scan. Send Goals to Controller: after Select Goals + valid goals.
         self.btn2.setEnabled(False)
         self.btn3.setEnabled(False)
 
@@ -127,6 +128,11 @@ class InteractiveImageGUI(QWidget):
         self.btn_reset_goals.setMinimumHeight(32)
         self.btn_reset_goals.clicked.connect(self.on_reset_goals)
 
+        self.checkbox_single_goal_mode = QCheckBox("Single Goal Mode")
+        self.checkbox_single_goal_mode.setChecked(True)
+        self.checkbox_single_goal_mode.setFont(_primary_font)
+        self.checkbox_single_goal_mode.setMinimumHeight(46)
+
         self.warning_label = QLabel("")
         self.warning_label.setStyleSheet("color: red; font-size: 17pt;")
         self.warning_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
@@ -138,7 +144,7 @@ class InteractiveImageGUI(QWidget):
 
         self.btn1.clicked.connect(self.on_scan_clicked)
         self.btn2.clicked.connect(self.on_select)
-        self.btn3.clicked.connect(self.on_start_pushing)
+        self.btn3.clicked.connect(self.on_send_to_controller)
         self.slider_x.valueChanged.connect(self.on_slider_x_changed)
         self.slider_y.valueChanged.connect(self.on_slider_y_changed)
         self.slider_rot.valueChanged.connect(self.on_slider_rot_changed)
@@ -147,6 +153,8 @@ class InteractiveImageGUI(QWidget):
         button_layout.addWidget(self.btn1)
         button_layout.addWidget(self.btn2)
         button_layout.addWidget(self.btn3)
+        button_layout.addWidget(self.checkbox_single_goal_mode)
+        button_layout.addStretch()
 
         object_row_layout = QHBoxLayout()
         object_row_layout.addWidget(self.label_object)
@@ -242,6 +250,70 @@ class InteractiveImageGUI(QWidget):
         self._scan_view_rgb: Optional[np.ndarray] = None
         self._scan_view_names: List[str] = []
         self._scan_view_boxes: List[List[int]] = []
+        self._scanning_ui_active = False
+        self._scan_chrome_visibility_backup: Dict[Any, bool] = {}
+        self._scan_stretch_backup: Optional[Tuple[int, int]] = None
+
+    def _scan_chrome_widgets(self):
+        """Secondary controls hidden during scan (main buttons + Single Goal Mode stay visible)."""
+        return (
+            self.label_object,
+            self.combo_object,
+            self.btn_reset_goals,
+            self.warning_label,
+            self.valid_goals_label,
+            self.label_slider_x,
+            self.label_slider_y,
+            self.label_slider_rot,
+            self.slider_x,
+            self.slider_y,
+            self.slider_rot,
+            self.value_slider_x,
+            self.value_slider_y,
+            self.value_slider_rot,
+            self.coord_label,
+        )
+
+    def _enter_scanning_only_message_ui(self) -> None:
+        """Hide secondary controls; keep main buttons, Single Goal Mode, and the scanning message visible."""
+        self._scanning_ui_active = True
+        self._scan_chrome_visibility_backup = {
+            w: w.isVisible() for w in self._scan_chrome_widgets()
+        }
+        for w in self._scan_chrome_widgets():
+            w.hide()
+
+        ly = self.layout()
+        idx_img = ly.indexOf(self.image_label)
+        idx_canvas = ly.indexOf(self.canvas)
+        self._scan_stretch_backup = None
+        if idx_img >= 0 and idx_canvas >= 0:
+            try:
+                self._scan_stretch_backup = (
+                    ly.stretch(idx_img),
+                    ly.stretch(idx_canvas),
+                )
+            except AttributeError:
+                self._scan_stretch_backup = (0, 1)
+            ly.setStretch(idx_img, 1)
+            ly.setStretch(idx_canvas, 0)
+
+    def _restore_scan_chrome_after_scan(self) -> None:
+        """Restore hidden widgets and layout stretch after scanning (or on error)."""
+        if not self._scanning_ui_active:
+            return
+        self._scanning_ui_active = False
+        for w, vis in self._scan_chrome_visibility_backup.items():
+            w.setVisible(vis)
+        self._scan_chrome_visibility_backup = {}
+
+        ly = self.layout()
+        idx_img = ly.indexOf(self.image_label)
+        idx_canvas = ly.indexOf(self.canvas)
+        if self._scan_stretch_backup is not None and idx_img >= 0 and idx_canvas >= 0:
+            ly.setStretch(idx_img, self._scan_stretch_backup[0])
+            ly.setStretch(idx_canvas, self._scan_stretch_backup[1])
+        self._scan_stretch_backup = None
 
     def _apply_default_goals(self) -> None:
         """Same layout as initial goals in on_select: center X, spread Y, 0° rotation."""
@@ -250,9 +322,7 @@ class InteractiveImageGUI(QWidget):
             return
         for i, state in enumerate(self.object_states):
             state["goal_cx"] = 0.5
-            state["goal_cy"] = (
-                0.2 * (i % num_objects) - (0.2 * (num_objects - 1)) / 2
-            )
+            state["goal_cy"] = 0.2 * (i % num_objects) - (0.2 * (num_objects - 1)) / 2
             state["goal_angle"] = 0.0
 
     def on_reset_goals(self) -> None:
@@ -433,6 +503,7 @@ class InteractiveImageGUI(QWidget):
             ax.axis("off")
 
     def _show_scanning_label(self) -> None:
+        self._enter_scanning_only_message_ui()
         self.image_label.setText("Scanning the scene and detecting objects...")
         self.image_label.show()
         self.canvas.hide()
@@ -442,19 +513,51 @@ class InteractiveImageGUI(QWidget):
     def on_scan_clicked(self) -> None:
         """Update UI, then defer heavy work so the scanning label can paint first."""
         self.btn1.setEnabled(False)
+        self.btn2.setEnabled(False)
+        self.btn3.setEnabled(False)
         self._show_scanning_label()
         QTimer.singleShot(0, self._on_scan_after_ui_ready)
 
     def _on_scan_after_ui_ready(self) -> None:
+        scan_ok = False
         try:
             self.on_scan()
+            scan_ok = True
         finally:
+            self._restore_scan_chrome_after_scan()
+            if scan_ok:
+                self._reset_goals_state_after_new_scan()
+            else:
+                self.btn2.setEnabled(True)
+                self.btn3.setEnabled(False)
             self.btn1.setEnabled(True)
+
+    def _reset_goals_state_after_new_scan(self) -> None:
+        """A new scan invalidates prior goal selection (same as UI before Select Goals)."""
+        self.object_states = []
+        self.current_object_index = -1
+        self.combo_object.blockSignals(True)
+        self.combo_object.clear()
+        self.combo_object.blockSignals(False)
+        self.label_object.hide()
+        self.combo_object.hide()
+        self.btn_reset_goals.hide()
+        self.warning_label.hide()
+        self.valid_goals_label.hide()
+        self.label_slider_x.hide()
+        self.label_slider_y.hide()
+        self.label_slider_rot.hide()
+        self.slider_x.hide()
+        self.slider_y.hide()
+        self.slider_rot.hide()
+        self.value_slider_x.hide()
+        self.value_slider_y.hide()
+        self.value_slider_rot.hide()
+        self.btn2.setEnabled(True)
+        self.btn3.setEnabled(False)
 
     def on_scan(self) -> None:
         logger.info("User pressed Scan button")
-        self.btn2.setEnabled(False)
-        self.btn3.setEnabled(False)
 
         img_rgb: Optional[np.ndarray] = None
         if rs is not None:
@@ -510,8 +613,6 @@ class InteractiveImageGUI(QWidget):
         self.canvas.show()
         self.image_label.hide()
 
-        self.btn2.setEnabled(True)
-
         # subprocess.Popen(
         #     [sys.executable, self.auto_tracking_gui_path],
         #     cwd=self.bundle_sdf_dir,
@@ -521,9 +622,7 @@ class InteractiveImageGUI(QWidget):
 
     def on_select(self):
         logger.info("User pressed Select Goals button")
-        # TODO ask if user want to use default goal (last targets for recovery) or select new ones
-        # load the mesh files
-        # and get the bounding box extents (x, y, z size)
+        # Load the mesh files and get the bounding box extents (x, y, z size)
         object_dims = []
         self.current_detected_objects = ["I_shape_video", "R_shape_video"]
         for name in self.current_detected_objects:
@@ -609,25 +708,24 @@ class InteractiveImageGUI(QWidget):
         self._sync_sliders_from_state()
         self.update_plot()
 
-    def on_start_pushing(self):
+    def on_send_to_controller(self):
         # close the window and exit the app
-        logger.info("Start Pushing button pressed")
+        logger.info("Send to Controller button pressed")
         if self.object_states:
+            goal_mode = 2 if self.checkbox_single_goal_mode.isChecked() else 0
             for state in self.object_states:
+                state["goal_mode"] = goal_mode
                 logger.info(
-                    "Object '{}' goal center: ({:.4f}, {:.4f}), goal angle: {:.2f}°",
+                    "Object '{}' goal center: ({:.4f}, {:.4f}), goal angle: {:.2f}°, goal_mode: {}",
                     _display_object_name(state["name"]),
                     state["goal_cx"],
                     state["goal_cy"],
                     state["goal_angle"],
+                    goal_mode,
                 )
                 logger.info("{}", state)
         else:
             logger.warning("No object states available to push.")
-        self.close()
-        QApplication.quit()
-
-        # TODO add continuous mode flag
 
     def update_plot(self):
         ax_left, ax = self._figure_dual_axes()
@@ -716,7 +814,7 @@ class InteractiveImageGUI(QWidget):
                 self.warning_label.hide()
                 self.valid_goals_label.setText("Selected goals are valid.")
                 self.valid_goals_label.show()
-            # Start Pushing: only when goals exist, in workspace, and not overlapping.
+            # Send to Controller: only when goals exist, in workspace, and not overlapping.
             self.btn3.setEnabled(not goals_overlap and not goals_outside_ws)
         else:
             ax.tick_params(axis="both", which="major", labelsize=PLOT_FONTSIZE_AXES)
