@@ -138,6 +138,7 @@ class InteractiveImageGUI(QWidget):
         self.valid_goals_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.valid_goals_label.hide()
 
+        self.btn1.clicked.connect(self._show_scanning_label)
         self.btn1.clicked.connect(self.on_scan)
         self.btn2.clicked.connect(self.on_select)
         self.btn3.clicked.connect(self.on_start_pushing)
@@ -208,9 +209,13 @@ class InteractiveImageGUI(QWidget):
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMouseTracking(True)  # needed for mouse events
+        _instruction_font = QFont()
+        _instruction_font.setPointSize(18)
+        self.image_label.setFont(_instruction_font)
+        self.image_label.setWordWrap(True)
 
         # Matplotlib canvas (margins applied after each draw; stretch so plot isn't clipped)
-        self.canvas = FigureCanvas(Figure(figsize=(8, 6), dpi=100))
+        self.canvas = FigureCanvas(Figure(figsize=(12, 5.5), dpi=100))
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.canvas.setMinimumHeight(260)
         self.canvas.hide()
@@ -220,7 +225,7 @@ class InteractiveImageGUI(QWidget):
         self.coord_label.setStyleSheet("color: green;")
 
         # Scan image is drawn on self.canvas in on_scan
-        self.image_label.setText("Press Scan to identify and start tracking objects")
+        self.image_label.setText("Please press Scan to identify and track objects.")
 
         # Add widgets to layout
         main_layout.addLayout(button_layout)
@@ -235,6 +240,10 @@ class InteractiveImageGUI(QWidget):
         self.object_states = []
         self.current_object_index = 0
         self.current_detected_objects: List[str] = []
+        # Last scan (left panel): RGB image + optional boxes/names for annotation
+        self._scan_view_rgb: Optional[np.ndarray] = None
+        self._scan_view_names: List[str] = []
+        self._scan_view_boxes: List[List[int]] = []
 
     def _capture_realsense_frame(self) -> Optional[np.ndarray]:
         pipeline = rs.pipeline()
@@ -347,10 +356,94 @@ class InteractiveImageGUI(QWidget):
                     return True
         return False
 
+    def _draw_scan_image_with_detections(
+        self,
+        ax,
+        img_rgb: np.ndarray,
+        names: List[str],
+        boxes: List[List[int]],
+    ) -> None:
+        ax.imshow(img_rgb)
+        ax.axis("off")
+        for i, (name, box) in enumerate(zip(names, boxes)):
+            if len(box) != 4:
+                continue
+            x, y, bw, bh = (int(box[0]), int(box[1]), int(box[2]), int(box[3]))
+            color = OBJECT_EDGE_COLORS[i % len(OBJECT_EDGE_COLORS)]
+            rect = patches.Rectangle(
+                (x, y),
+                bw,
+                bh,
+                linewidth=2,
+                edgecolor=color,
+                facecolor="none",
+            )
+            ax.add_patch(rect)
+            ax.text(
+                x,
+                max(2.0, float(y) - 6.0),
+                _display_object_name(name),
+                fontsize=11,
+                color=color,
+                verticalalignment="bottom",
+                bbox=dict(
+                    boxstyle="round,pad=0.25",
+                    facecolor="white",
+                    alpha=0.85,
+                    edgecolor="none",
+                ),
+            )
+
+    def _figure_dual_axes(self):
+        """Left: camera / detections. Right: goal planning (world frame)."""
+        fig = self.canvas.figure
+        fig.clear()
+        gs = fig.add_gridspec(1, 2, width_ratios=[1.05, 1.0], wspace=0.22)
+        ax_left = fig.add_subplot(gs[0, 0])
+        ax_right = fig.add_subplot(gs[0, 1])
+        return ax_left, ax_right
+
+    def _draw_left_scan_panel(self, ax) -> None:
+        ax.set_title("Scan (detections)", fontsize=PLOT_FONTSIZE_TITLE)
+        if self._scan_view_rgb is None:
+            ax.text(
+                0.5,
+                0.5,
+                "Run Scan",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=PLOT_FONTSIZE_OBJECT_LABEL,
+            )
+            ax.axis("off")
+            return
+        if (
+            self._scan_view_names
+            and self._scan_view_boxes
+            and len(self._scan_view_names) == len(self._scan_view_boxes)
+        ):
+            self._draw_scan_image_with_detections(
+                ax,
+                self._scan_view_rgb,
+                self._scan_view_names,
+                self._scan_view_boxes,
+            )
+        else:
+            ax.imshow(self._scan_view_rgb)
+            ax.axis("off")
+
+    def _show_scanning_label(self) -> None:
+        self.image_label.setText("Scanning the scene and detecting objects...")
+        self.image_label.show()
+        self.canvas.hide()
+        self.image_label.repaint()
+        QApplication.processEvents()
+
     def on_scan(self) -> None:
         logger.info("User pressed Scan button")
         self.btn2.setEnabled(False)
         self.btn3.setEnabled(False)
+
         img_rgb: Optional[np.ndarray] = None
         if rs is not None:
             img_rgb = self._capture_realsense_frame()
@@ -368,18 +461,12 @@ class InteractiveImageGUI(QWidget):
             pil_fallback = Image.open(self.captured_image_path).convert("RGB")
             img_rgb = np.asarray(pil_fallback)
 
-        self.canvas.figure.clear()
-        ax = self.canvas.figure.add_subplot(111)
-        ax.imshow(img_rgb)
-        ax.axis("off")
-        self._apply_figure_margins()
-        self.canvas.draw()
-        self.canvas.show()
-        self.image_label.hide()
-
+        pil_img = Image.fromarray(img_rgb)
+        scan_boxes: List[List[int]] = []
         try:
-            pil_img = Image.fromarray(img_rgb)
-            self.current_detected_objects = scan_objects(pil_img, self.masks_dir)
+            self.current_detected_objects, scan_boxes = scan_objects(
+                pil_img, self.masks_dir
+            )
             logger.info(
                 "mask scanning is done, detected objects: {}",
                 self.current_detected_objects,
@@ -387,6 +474,29 @@ class InteractiveImageGUI(QWidget):
         except Exception as e:
             logger.exception("scan_objects failed: {}", e)
             self.current_detected_objects = []
+            scan_boxes = []
+
+        self._scan_view_rgb = img_rgb
+        self._scan_view_names = list(self.current_detected_objects)
+        self._scan_view_boxes = [list(b) for b in scan_boxes]
+
+        ax_left, ax_right = self._figure_dual_axes()
+        self._draw_left_scan_panel(ax_left)
+        ax_right.text(
+            0.5,
+            0.5,
+            "Press Select Goals",
+            transform=ax_right.transAxes,
+            ha="center",
+            va="center",
+            fontsize=PLOT_FONTSIZE_OBJECT_LABEL,
+            color="gray",
+        )
+        ax_right.axis("off")
+        self._apply_figure_margins()
+        self.canvas.draw()
+        self.canvas.show()
+        self.image_label.hide()
 
         self.btn2.setEnabled(True)
 
@@ -415,10 +525,12 @@ class InteractiveImageGUI(QWidget):
             else:
                 logger.error("Mesh file not found for {}: {}", name, mesh_path)
 
-        # Populate object states
+        # Populate object states (current pose from file; default goals from layout, 0° rotation)
         self.object_states = []
         few_objects = object_dims[:3]
-        for name, dims in few_objects:
+        num_objects = len(few_objects)
+
+        for i, (name, dims) in enumerate(few_objects):
             initial_pose_path = os.path.join(
                 self.foundation_pose_dir, name, "obj_pose_in_world", "00001.txt"
             )
@@ -452,15 +564,18 @@ class InteractiveImageGUI(QWidget):
                     "Pose matrix not found for {}: {}", name, initial_pose_path
                 )
 
+            goal_cx = 0.5
+            goal_cy = 0.2 * (i % num_objects) - (0.2 * (num_objects - 1)) / 2
+
             self.object_states.append(
                 {
                     "name": name,
                     "cx": cx,
                     "cy": cy,
                     "angle": angle,
-                    "goal_cx": cx,
-                    "goal_cy": cy,
-                    "goal_angle": angle,
+                    "goal_cx": goal_cx,
+                    "goal_cy": goal_cy,
+                    "goal_angle": 0.0,
                     "dims": dims,
                 }
             )
@@ -507,9 +622,10 @@ class InteractiveImageGUI(QWidget):
         # TODO add continuous mode flag
 
     def update_plot(self):
-        self.canvas.figure.clear()
+        ax_left, ax = self._figure_dual_axes()
+        self._draw_left_scan_panel(ax_left)
+
         if self.object_states:
-            ax = self.canvas.figure.add_subplot(111)
             ax.tick_params(axis="both", which="major", labelsize=PLOT_FONTSIZE_AXES)
             wx0, wx1 = WORKSPACE_X_LIMIT
             wy0, wy1 = WORKSPACE_Y_LIMIT
@@ -572,7 +688,7 @@ class InteractiveImageGUI(QWidget):
             ax.set_ylim(-0.5, 0.5)
             ax.set_aspect("equal")
             ax.set_title(
-                "Objects: solid = current, dashed = goal (fixed color per object)",
+                "Goals: solid = current, dashed = goal",
                 fontsize=PLOT_FONTSIZE_TITLE,
             )
             self._annotate_robot_frame(ax)
@@ -595,7 +711,6 @@ class InteractiveImageGUI(QWidget):
             # Start Pushing: only when goals exist, in workspace, and not overlapping.
             self.btn3.setEnabled(not goals_overlap and not goals_outside_ws)
         else:
-            ax = self.canvas.figure.add_subplot(111)
             ax.tick_params(axis="both", which="major", labelsize=PLOT_FONTSIZE_AXES)
             ax.text(
                 0.5,
@@ -606,7 +721,7 @@ class InteractiveImageGUI(QWidget):
                 transform=ax.transAxes,
                 fontsize=PLOT_FONTSIZE_OBJECT_LABEL,
             )
-            ax.set_title("No Data", fontsize=PLOT_FONTSIZE_TITLE)
+            ax.set_title("Goals (plan)", fontsize=PLOT_FONTSIZE_TITLE)
             self.warning_label.hide()
             self.valid_goals_label.hide()
             self.btn3.setEnabled(False)
@@ -675,8 +790,10 @@ class InteractiveImageGUI(QWidget):
         )
 
     def _apply_figure_margins(self) -> None:
-        # Embedded Qt canvas needs explicit room for title and axis tick labels.
-        self.canvas.figure.subplots_adjust(left=0.12, right=0.96, top=0.90, bottom=0.14)
+        # Dual-panel layout: room for two titles and axis labels.
+        self.canvas.figure.subplots_adjust(
+            left=0.06, right=0.98, top=0.88, bottom=0.12, wspace=0.28
+        )
 
     def _update_slider_value_labels(self) -> None:
         if not self.object_states or self.current_object_index < 0:

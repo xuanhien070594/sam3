@@ -91,7 +91,7 @@ def generate_gemini_mask(
     return bounding_boxes, labels
 
 
-def scan_objects(img: Image.Image, masks_folder: str) -> List[str]:
+def scan_objects(img: Image.Image, masks_folder: str) -> Tuple[List[str], List[List[int]]]:
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     object_library = [
         "A_shape_video",
@@ -138,10 +138,12 @@ def scan_objects(img: Image.Image, masks_folder: str) -> List[str]:
         mask_img = Image.fromarray(mask.astype("uint8") * 255, mode="L")
         mask_img.save(f"{masks_folder}/mask_{object_name}.png")
 
-    return object_names
+    boxes_xywh = [[int(v) for v in row] for row in box_input_xywh]
+    return object_names, boxes_xywh
 
 
 if __name__ == "__main__":
     img = Image.open("/Users/hienbui/git/sam3/scripts/realsense_capture.jpg")
     folder = "/Users/hienbui/Downloads/"
-    scan_objects(img, folder)
+    names, boxes = scan_objects(img, folder)
+    print(names, boxes)
