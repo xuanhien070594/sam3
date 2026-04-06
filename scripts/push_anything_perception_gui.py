@@ -158,10 +158,10 @@ class PushAnythingPerceptionGUI(QWidget):
         self.combo_object.setMinimumWidth(200)
         self.combo_object.setFont(_primary_font)
         self.combo_object.setMinimumHeight(46)
-        self.btn_reset_goals = QPushButton("Reset Goals")
-        self.btn_reset_goals.setFont(_primary_font)
-        self.btn_reset_goals.setMinimumHeight(46)
-        self.btn_reset_goals.clicked.connect(self.on_reset_goals)
+        self.btn_default_goals = QPushButton("Default Goals")
+        self.btn_default_goals.setFont(_primary_font)
+        self.btn_default_goals.setMinimumHeight(46)
+        self.btn_default_goals.clicked.connect(self.on_default_goals)
 
         self.checkbox_single_goal_mode = QCheckBox("Single Goal Mode")
         self.checkbox_single_goal_mode.setChecked(True)
@@ -194,7 +194,7 @@ class PushAnythingPerceptionGUI(QWidget):
         object_row_layout = QHBoxLayout()
         object_row_layout.addWidget(self.label_object)
         object_row_layout.addWidget(self.combo_object)
-        object_row_layout.addWidget(self.btn_reset_goals)
+        object_row_layout.addWidget(self.btn_default_goals)
         object_row_layout.addWidget(self.warning_label)
         object_row_layout.addWidget(self.valid_goals_label)
         object_row_layout.addStretch()
@@ -257,7 +257,7 @@ class PushAnythingPerceptionGUI(QWidget):
         self.value_slider_rot.hide()
         self.label_object.hide()
         self.combo_object.hide()
-        self.btn_reset_goals.hide()
+        self.btn_default_goals.hide()
         self.warning_label.hide()
         self.valid_goals_label.hide()
 
@@ -309,7 +309,7 @@ class PushAnythingPerceptionGUI(QWidget):
         return (
             self.label_object,
             self.combo_object,
-            self.btn_reset_goals,
+            self.btn_default_goals,
             self.warning_label,
             self.valid_goals_label,
             self.label_slider_x,
@@ -375,8 +375,8 @@ class PushAnythingPerceptionGUI(QWidget):
             state["goal_cy"] = 0.2 * (i % num_objects) - (0.2 * (num_objects - 1)) / 2
             state["goal_angle"] = 0.0
 
-    def on_reset_goals(self) -> None:
-        logger.info("User pressed Reset goals")
+    def on_default_goals(self) -> None:
+        logger.info("User pressed Default Goals")
         if not self.object_states:
             return
         self._apply_default_goals()
@@ -586,13 +586,13 @@ class PushAnythingPerceptionGUI(QWidget):
         finally:
             self._restore_scan_chrome_after_scan()
             if scan_ok:
-                self._reset_goals_state_after_new_scan()
+                self._set_default_goals_state_after_new_scan()
             else:
                 self.btn2.setEnabled(True)
                 self.btn3.setEnabled(False)
             self.btn1.setEnabled(True)
 
-    def _reset_goals_state_after_new_scan(self) -> None:
+    def _set_default_goals_state_after_new_scan(self) -> None:
         """A new scan invalidates prior goal selection (same as UI before Select Goals)."""
         self.object_states = []
         self.current_object_index = -1
@@ -601,7 +601,7 @@ class PushAnythingPerceptionGUI(QWidget):
         self.combo_object.blockSignals(False)
         self.label_object.hide()
         self.combo_object.hide()
-        self.btn_reset_goals.hide()
+        self.btn_default_goals.hide()
         self.warning_label.hide()
         self.valid_goals_label.hide()
         self.label_slider_x.hide()
@@ -715,7 +715,7 @@ class PushAnythingPerceptionGUI(QWidget):
             else:
                 logger.error("Mesh file not found for {}: {}", name, mesh_path)
 
-        # Populate object states (current pose from file; default goals from layout, 0° rotation)
+        # Populate object states (initialize goals to current poses).
         self.object_states = []
         few_objects = object_dims[:3]
 
@@ -759,11 +759,12 @@ class PushAnythingPerceptionGUI(QWidget):
                     "cx": cx,
                     "cy": cy,
                     "angle": angle,
+                    "goal_cx": cx,
+                    "goal_cy": cy,
+                    "goal_angle": angle,
                     "dims": dims,
                 }
             )
-
-        self._apply_default_goals()
 
         self.current_object_index = 0 if self.object_states else -1
 
@@ -781,7 +782,7 @@ class PushAnythingPerceptionGUI(QWidget):
         self.value_slider_rot.show()
         self.label_object.show()
         self.combo_object.show()
-        self.btn_reset_goals.show()
+        self.btn_default_goals.show()
 
         self._populate_object_combo()
         self._sync_sliders_from_state()
