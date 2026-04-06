@@ -12,11 +12,9 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
 )
-from PyQt5.QtCore import Qt, QPoint
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
-import subprocess
 import numpy as np
-import datetime
 import trimesh
 
 try:
@@ -71,9 +69,6 @@ class InteractiveImageGUI(QWidget):
         self.captured_image_path = os.path.join(
             self.base_dir, self.captured_image_filename
         )
-        self.object_names_filename = "object_names.txt"
-        self.object_names_path = os.path.join(self.base_dir, self.object_names_filename)
-
         self.bundle_sdf_dir = "/home/yufeiyang/Documents/BundleSDF"
         self.auto_tracking_gui_path = os.path.join(
             self.bundle_sdf_dir, "auto_tracking_gui.py"
@@ -89,9 +84,6 @@ class InteractiveImageGUI(QWidget):
 
         self.setWindowTitle("Interactive Image GUI")
         self.resize(1200, 1500)
-
-        # Store clicked points
-        self.points = []
 
         # --- Main layout ---
         main_layout = QVBoxLayout()
@@ -236,7 +228,6 @@ class InteractiveImageGUI(QWidget):
         main_layout.addWidget(self.coord_label)
         self.setLayout(main_layout)
 
-        self.selected_goals = []
         self.object_states = []
         self.current_object_index = 0
         self.current_detected_objects: List[str] = []
@@ -281,24 +272,6 @@ class InteractiveImageGUI(QWidget):
         tr = rect.get_transform()
         corners = tr.transform(path.vertices)[:4]
         return corners
-
-    def _world_to_canvas(self, world_x, world_y):
-        # World axes: x is vertical, y is horizontal.
-        # Convert to canvas axes: x right, y up.
-        return float(world_y), float(-world_x)
-
-    def _world_angle_to_canvas(self, world_angle_rad):
-        # Rotate the world frame by 90 degrees clockwise for display.
-        return math.degrees(world_angle_rad) - 90.0
-
-    def _pose_to_display_state(self, pose, dims):
-        display_cx, display_cy = self._world_to_canvas(pose[0, 3], pose[1, 3])
-        world_angle = math.atan2(pose[1, 0], pose[0, 0])
-        display_angle = self._world_angle_to_canvas(world_angle)
-        display_dims = (
-            (dims[1], dims[0], dims[2]) if len(dims) >= 3 else (dims[1], dims[0])
-        )
-        return display_cx, display_cy, display_angle, display_dims
 
     def check_overlap(self):
         for i in range(len(self.object_states)):
