@@ -1,6 +1,7 @@
 import os
 import torch
 import json
+import gc
 from PIL import Image
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
@@ -52,7 +53,7 @@ def generate_gemini_mask(
     img_w, img_h = img.size
 
     prompt = f"""
-    Segment all objects on the table.
+    Segment all objects ONLY on the ROBOT table.
     Exclude robots and the table itself.
 
     Output a JSON list where each entry contains:
@@ -109,46 +110,58 @@ def scan_objects(
         "tape",
     ]
 
-    # Load SAM3 model
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = build_sam3_image_model(device=device)
-    processor = Sam3Processor(model)
-    width, height = img.size
-    inference_state = processor.set_image(img)
+    model = None
+    processor = None
+    inference_state = None
+    try:
+        # Load SAM3 model
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = build_sam3_image_model(device=device)
+        processor = Sam3Processor(model)
+        width, height = img.size
+        inference_state = processor.set_image(img)
 
-    # Use Gemini to generate bounding boxes and labels
-    box_input_xywh, object_names = generate_gemini_mask(img, client, object_library)
-    print(
-        f"Identified {len(box_input_xywh)} objects with bounding boxes: {box_input_xywh}"
-    )
-    print(f"Identified {len(object_names)} objects with names: {object_names}")
+        # Use Gemini to generate bounding boxes and labels
+        box_input_xywh, object_names = generate_gemini_mask(img, client, object_library)
+        print(
+            f"Identified {len(box_input_xywh)} objects with bounding boxes: {box_input_xywh}"
+        )
+        print(f"Identified {len(object_names)} objects with names: {object_names}")
 
-    box_input_cxcywh = box_xywh_to_cxcywh(torch.tensor(box_input_xywh).view(-1, 4))
-    norm_boxes_cxcywh = normalize_bbox(box_input_cxcywh, width, height).tolist()
+        box_input_cxcywh = box_xywh_to_cxcywh(torch.tensor(box_input_xywh).view(-1, 4))
+        norm_boxes_cxcywh = normalize_bbox(box_input_cxcywh, width, height).tolist()
 
-    for i, object_name in enumerate(object_names):
-        # Create negative and positive boxes for sam3's box prompt
-        # Negative boxes are boxes that are not the object of interest
-        box_labels = [False] * len(object_names)
-        box_labels[i] = True
+        for i, object_name in enumerate(object_names):
+            # Create negative and positive boxes for sam3's box prompt
+            # Negative boxes are boxes that are not the object of interest
+            box_labels = [False] * len(object_names)
+            box_labels[i] = True
 
-        processor.reset_all_prompts(inference_state)
+            processor.reset_all_prompts(inference_state)
 
-        for box, label in zip(norm_boxes_cxcywh, box_labels):
-            inference_state = processor.add_geometric_prompt(
-                state=inference_state, box=box, label=label
-            )
+            for box, label in zip(norm_boxes_cxcywh, box_labels):
+                inference_state = processor.add_geometric_prompt(
+                    state=inference_state, box=box, label=label
+                )
 
-        assert (
-            inference_state["masks"].shape[0] == 1
-        ), "Only one mask should be generated"
+            assert (
+                inference_state["masks"].shape[0] == 1
+            ), "Only one mask should be generated"
 
-        mask = inference_state["masks"][0][0].detach().cpu().numpy()
-        mask_img = Image.fromarray(mask.astype("uint8") * 255, mode="L")
-        mask_img.save(f"{masks_folder}/mask_{object_name}.png")
+            mask = inference_state["masks"][0][0].detach().cpu().numpy()
+            mask_img = Image.fromarray(mask.astype("uint8") * 255, mode="L")
+            mask_img.save(f"{masks_folder}/mask_{object_name}.png")
 
-    boxes_xywh = [[int(v) for v in row] for row in box_input_xywh]
-    return object_names, boxes_xywh
+        boxes_xywh = [[int(v) for v in row] for row in box_input_xywh]
+        return object_names, boxes_xywh
+    finally:
+        # Explicitly release SAM3 resources before launching downstream GPU jobs.
+        del inference_state
+        del processor
+        del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

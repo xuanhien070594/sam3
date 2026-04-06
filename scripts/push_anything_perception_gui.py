@@ -635,6 +635,7 @@ class PushAnythingPerceptionGUI(QWidget):
     def on_scan(self) -> None:
         logger.info("User pressed Scan button")
         from object_detection_and_segmentation import scan_objects
+
         self._kill_existing_tracking_processes()
 
         img_rgb: Optional[np.ndarray] = None
@@ -660,7 +661,7 @@ class PushAnythingPerceptionGUI(QWidget):
             self.current_detected_objects, scan_boxes = scan_objects(
                 pil_img, self.masks_dir
             )
-            with open("/home/yufeiyang/git/sam3/scripts/object_names.txt", "w") as f:
+            with open(os.path.join(self.masks_dir, "object_names.txt"), "w") as f:
                 for name in self.current_detected_objects:
                     f.write(name + "\n")
             logger.info(

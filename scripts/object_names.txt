@@ -1,3 +1,0 @@
-tape
-baby_toy
-book
