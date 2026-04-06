@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 import numpy as np
 import trimesh
@@ -120,6 +120,12 @@ class InteractiveImageGUI(QWidget):
         self.label_object = QLabel("Object: ")
         self.combo_object = QComboBox()
         self.combo_object.setMinimumWidth(200)
+        self.btn_reset_goals = QPushButton("Reset Goals")
+        _reset_font = QFont()
+        _reset_font.setPointSize(13)
+        self.btn_reset_goals.setFont(_reset_font)
+        self.btn_reset_goals.setMinimumHeight(32)
+        self.btn_reset_goals.clicked.connect(self.on_reset_goals)
 
         self.warning_label = QLabel("")
         self.warning_label.setStyleSheet("color: red; font-size: 17pt;")
@@ -130,8 +136,7 @@ class InteractiveImageGUI(QWidget):
         self.valid_goals_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.valid_goals_label.hide()
 
-        self.btn1.clicked.connect(self._show_scanning_label)
-        self.btn1.clicked.connect(self.on_scan)
+        self.btn1.clicked.connect(self.on_scan_clicked)
         self.btn2.clicked.connect(self.on_select)
         self.btn3.clicked.connect(self.on_start_pushing)
         self.slider_x.valueChanged.connect(self.on_slider_x_changed)
@@ -146,6 +151,7 @@ class InteractiveImageGUI(QWidget):
         object_row_layout = QHBoxLayout()
         object_row_layout.addWidget(self.label_object)
         object_row_layout.addWidget(self.combo_object)
+        object_row_layout.addWidget(self.btn_reset_goals)
         object_row_layout.addWidget(self.warning_label)
         object_row_layout.addWidget(self.valid_goals_label)
         object_row_layout.addStretch()
@@ -194,6 +200,7 @@ class InteractiveImageGUI(QWidget):
         self.value_slider_rot.hide()
         self.label_object.hide()
         self.combo_object.hide()
+        self.btn_reset_goals.hide()
         self.warning_label.hide()
         self.valid_goals_label.hide()
 
@@ -216,7 +223,7 @@ class InteractiveImageGUI(QWidget):
         self.coord_label = QLabel("")
         self.coord_label.setStyleSheet("color: green;")
 
-        # Scan image is drawn on self.canvas in on_scan
+        # Scan image is drawn on self.canvas in on_scan (after on_scan_clicked defers work)
         self.image_label.setText("Please press Scan to identify and track objects.")
 
         # Add widgets to layout
@@ -235,6 +242,26 @@ class InteractiveImageGUI(QWidget):
         self._scan_view_rgb: Optional[np.ndarray] = None
         self._scan_view_names: List[str] = []
         self._scan_view_boxes: List[List[int]] = []
+
+    def _apply_default_goals(self) -> None:
+        """Same layout as initial goals in on_select: center X, spread Y, 0° rotation."""
+        num_objects = len(self.object_states)
+        if num_objects == 0:
+            return
+        for i, state in enumerate(self.object_states):
+            state["goal_cx"] = 0.5
+            state["goal_cy"] = (
+                0.2 * (i % num_objects) - (0.2 * (num_objects - 1)) / 2
+            )
+            state["goal_angle"] = 0.0
+
+    def on_reset_goals(self) -> None:
+        logger.info("User pressed Reset goals")
+        if not self.object_states:
+            return
+        self._apply_default_goals()
+        self._sync_sliders_from_state()
+        self.update_plot()
 
     def _capture_realsense_frame(self) -> Optional[np.ndarray]:
         pipeline = rs.pipeline()
@@ -412,6 +439,18 @@ class InteractiveImageGUI(QWidget):
         self.image_label.repaint()
         QApplication.processEvents()
 
+    def on_scan_clicked(self) -> None:
+        """Update UI, then defer heavy work so the scanning label can paint first."""
+        self.btn1.setEnabled(False)
+        self._show_scanning_label()
+        QTimer.singleShot(0, self._on_scan_after_ui_ready)
+
+    def _on_scan_after_ui_ready(self) -> None:
+        try:
+            self.on_scan()
+        finally:
+            self.btn1.setEnabled(True)
+
     def on_scan(self) -> None:
         logger.info("User pressed Scan button")
         self.btn2.setEnabled(False)
@@ -501,9 +540,8 @@ class InteractiveImageGUI(QWidget):
         # Populate object states (current pose from file; default goals from layout, 0° rotation)
         self.object_states = []
         few_objects = object_dims[:3]
-        num_objects = len(few_objects)
 
-        for i, (name, dims) in enumerate(few_objects):
+        for name, dims in few_objects:
             initial_pose_path = os.path.join(
                 self.foundation_pose_dir, name, "obj_pose_in_world", "00001.txt"
             )
@@ -537,21 +575,17 @@ class InteractiveImageGUI(QWidget):
                     "Pose matrix not found for {}: {}", name, initial_pose_path
                 )
 
-            goal_cx = 0.5
-            goal_cy = 0.2 * (i % num_objects) - (0.2 * (num_objects - 1)) / 2
-
             self.object_states.append(
                 {
                     "name": name,
                     "cx": cx,
                     "cy": cy,
                     "angle": angle,
-                    "goal_cx": goal_cx,
-                    "goal_cy": goal_cy,
-                    "goal_angle": 0.0,
                     "dims": dims,
                 }
             )
+
+        self._apply_default_goals()
 
         self.current_object_index = 0 if self.object_states else -1
 
@@ -569,6 +603,7 @@ class InteractiveImageGUI(QWidget):
         self.value_slider_rot.show()
         self.label_object.show()
         self.combo_object.show()
+        self.btn_reset_goals.show()
 
         self._populate_object_combo()
         self._sync_sliders_from_state()
