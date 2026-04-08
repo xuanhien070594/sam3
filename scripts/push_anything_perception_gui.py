@@ -697,6 +697,16 @@ class PushAnythingPerceptionGUI(QWidget):
             self.current_detected_objects, scan_boxes = scan_objects(
                 pil_img, self.masks_dir
             )
+            # Sort detections left-to-right in image space so object order is stable from Scan.
+            if self.current_detected_objects and scan_boxes:
+                paired = [
+                    (name, box)
+                    for name, box in zip(self.current_detected_objects, scan_boxes)
+                    if len(box) >= 4
+                ]
+                paired.sort(key=lambda p: float(p[1][0] + p[1][2] * 0.5))
+                self.current_detected_objects = [p[0] for p in paired]
+                scan_boxes = [list(p[1]) for p in paired]
             with open(os.path.join(self.masks_dir, "object_names.txt"), "w") as f:
                 for name in self.current_detected_objects:
                     f.write(name + "\n")
@@ -734,6 +744,15 @@ class PushAnythingPerceptionGUI(QWidget):
         subprocess.Popen(
             [sys.executable, self.auto_tracking_gui_path],
             cwd=self.bundle_sdf_dir,
+        )
+
+        # Send only the object names to the controller
+        # target poses are set to default values and will be ignored by the controller
+        self.target_poses_publisher.publish_target(
+            self.current_detected_objects,
+            [np.array([0.0, 0.0])] * len(self.current_detected_objects),
+            [np.array([1.0, 0.0, 0.0, 0.0])] * len(self.current_detected_objects),
+            2,
         )
 
     def on_select(self):
@@ -801,10 +820,6 @@ class PushAnythingPerceptionGUI(QWidget):
                     "dims": dims,
                 }
             )
-
-        # Keep object list order consistent with scene layout (left → right).
-        # Plot x-axis maps to robot Y, so sorting by cy gives left-to-right ordering.
-        self.object_states.sort(key=lambda s: float(s["cy"]))
 
         self.current_object_index = 0 if self.object_states else -1
 
@@ -948,7 +963,7 @@ class PushAnythingPerceptionGUI(QWidget):
             ax.invert_yaxis()
             ax.set_aspect("equal")
             ax.set_title(
-                "Solid = Current Pose, Dotted = Goal Pose",
+                "Top-down View: Solid = Current Pose, Dotted = Goal Pose",
                 fontsize=PLOT_FONTSIZE_TITLE,
             )
             # Green only when goals are inside workspace AND do not overlap each other.
