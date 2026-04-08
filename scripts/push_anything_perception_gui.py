@@ -42,11 +42,11 @@ OBJECT_EDGE_COLORS = (
     "#2ca02c",
 )
 
-WORKSPACE_X_LIMIT = (0.372, 0.625)
-WORKSPACE_Y_LIMIT = (-0.38, 0.38)
+WORKSPACE_X_LIMIT = (0.35, 0.65)
+WORKSPACE_Y_LIMIT = (-0.4, 0.4)
 
 # Plot: robot +Y → +plot x; robot +X → downward on screen via invert_yaxis (py = rx > 0).
-PLOT_XLIM = (0.0, 0.8)  # robot X → plot y (positive ticks)
+PLOT_XLIM = (0.3, 0.7)  # robot X → plot y (positive ticks)
 PLOT_YLIM = (-0.5, 0.5)  # robot Y → plot x
 
 GOAL_X_RANGE = (-0.5, 1.0)
@@ -88,8 +88,6 @@ def _goal_angle_deg_to_quat_wxyz(angle_deg: float) -> np.ndarray:
 PLOT_FONTSIZE_TITLE = 13
 PLOT_FONTSIZE_OBJECT_LABEL = 12
 PLOT_FONTSIZE_AXES = 11
-PLOT_FONTSIZE_ROBOT_AXIS = 12
-PLOT_FONTSIZE_ROBOT_CAPTION = 11
 
 
 class PushAnythingPerceptionGUI(QWidget):
@@ -884,11 +882,9 @@ class PushAnythingPerceptionGUI(QWidget):
             ax.invert_yaxis()
             ax.set_aspect("equal")
             ax.set_title(
-                "Goals: solid = current, dotted = goal",
+                "Solid = Current Pose, Dotted = Goal Pose",
                 fontsize=PLOT_FONTSIZE_TITLE,
             )
-            self._annotate_robot_frame(ax)
-
             # Green only when goals are inside workspace AND do not overlap each other.
             goals_overlap = self.check_overlap()
             goals_outside_ws = self._goals_outside_workspace()
@@ -897,7 +893,9 @@ class PushAnythingPerceptionGUI(QWidget):
                 self.warning_label.show()
                 self.valid_goals_label.hide()
             elif goals_outside_ws:
-                self.warning_label.setText("Warning: Goal(s) outside workspace!")
+                self.warning_label.setText(
+                    "Warning: Goal(s) outside of desired regions!"
+                )
                 self.warning_label.show()
                 self.valid_goals_label.hide()
             else:
@@ -1050,69 +1048,6 @@ class PushAnythingPerceptionGUI(QWidget):
                     )
             self._rotating_goal_index = None
             self._rotate_prev_pointer_rad = None
-
-    def _annotate_robot_frame(self, ax) -> None:
-        """Draw XY triad at origin: robot +Y right, robot +X down (Z omitted)."""
-        L = 0.12
-        z = 10
-        # clip_on=False: arrows/labels may extend past spines.
-        kw = dict(
-            arrowstyle="->",
-            mutation_scale=18,
-            linewidth=1.8,
-            zorder=z,
-            clip_on=False,
-        )
-        # Robot +Y → plot +x (to the right)
-        ax.add_patch(
-            patches.FancyArrowPatch(
-                (0.0, 0.0),
-                (L, 0.0),
-                color="darkgreen",
-                **kw,
-            )
-        )
-        # Robot +X → +plot y (displays downward after invert_yaxis)
-        ax.add_patch(
-            patches.FancyArrowPatch(
-                (0.0, 0.0),
-                (0.0, L),
-                color="darkred",
-                **kw,
-            )
-        )
-        ax.text(
-            L,
-            0.02,
-            "y",
-            fontsize=PLOT_FONTSIZE_ROBOT_AXIS,
-            color="darkgreen",
-            zorder=z,
-            va="center",
-            clip_on=False,
-        )
-        ax.text(
-            0.02,
-            L + 0.02,
-            "x",
-            fontsize=PLOT_FONTSIZE_ROBOT_AXIS,
-            color="darkred",
-            zorder=z,
-            ha="center",
-            va="bottom",
-            clip_on=False,
-        )
-        ax.text(
-            0.02,
-            0.06,
-            "Robot Frame",
-            fontsize=PLOT_FONTSIZE_ROBOT_CAPTION,
-            color="black",
-            zorder=z,
-            ha="left",
-            va="top",
-            clip_on=False,
-        )
 
     def _apply_figure_margins(self) -> None:
         # Dual-panel layout: room for two titles and axis labels.
