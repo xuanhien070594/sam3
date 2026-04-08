@@ -26,7 +26,7 @@ except ImportError:
     rs = None
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 import math
 import matplotlib.patches as patches
 from loguru import logger
@@ -1084,6 +1084,34 @@ class PushAnythingPerceptionGUI(QWidget):
         # Radius in plot-data units (meters) around goal center to start dragging.
         return best_idx if best_dist <= 0.06 else None
 
+    def _pick_goal_for_rotation(self, plot_x: float, plot_y: float) -> Optional[int]:
+        """Pick goal when click lies inside its rotated goal bbox in plot coordinates."""
+        if not self.object_states:
+            return None
+        clicked_point = Point(float(plot_x), float(plot_y))
+        best_idx = None
+        best_dist = float("inf")
+        for i, state in enumerate(self.object_states):
+            poly_plot = Polygon(
+                self._rect_polygon_plot_xy(
+                    float(state["goal_cx"]),
+                    float(state["goal_cy"]),
+                    float(state["dims"][0]),
+                    float(state["dims"][1]),
+                    float(state["goal_angle"]),
+                )
+            )
+            if not (
+                poly_plot.contains(clicked_point) or poly_plot.touches(clicked_point)
+            ):
+                continue
+            gx, gy = _robot_xy_to_plot_xy(state["goal_cx"], state["goal_cy"])
+            d = math.hypot(plot_x - gx, plot_y - gy)
+            if d < best_dist:
+                best_dist = d
+                best_idx = i
+        return best_idx
+
     def _set_goal_from_plot_xy(self, index: int, plot_x: float, plot_y: float) -> None:
         if index < 0 or index >= len(self.object_states):
             return
@@ -1114,20 +1142,28 @@ class PushAnythingPerceptionGUI(QWidget):
             return
         if event.xdata is None or event.ydata is None:
             return
-        goal_idx = self._pick_goal_for_drag(float(event.xdata), float(event.ydata))
-        if goal_idx is None:
-            return
-        self.current_object_index = goal_idx
-        self.combo_object.blockSignals(True)
-        self.combo_object.setCurrentIndex(goal_idx)
-        self.combo_object.blockSignals(False)
-
         if event.button == 1:
+            goal_idx = self._pick_goal_for_drag(float(event.xdata), float(event.ydata))
+            if goal_idx is None:
+                return
+            self.current_object_index = goal_idx
+            self.combo_object.blockSignals(True)
+            self.combo_object.setCurrentIndex(goal_idx)
+            self.combo_object.blockSignals(False)
             self._dragging_goal_index = goal_idx
             self._set_goal_from_plot_xy(
                 goal_idx, float(event.xdata), float(event.ydata)
             )
         elif event.button == 3:
+            goal_idx = self._pick_goal_for_rotation(
+                float(event.xdata), float(event.ydata)
+            )
+            if goal_idx is None:
+                return
+            self.current_object_index = goal_idx
+            self.combo_object.blockSignals(True)
+            self.combo_object.setCurrentIndex(goal_idx)
+            self.combo_object.blockSignals(False)
             state = self.object_states[goal_idx]
             drx, dry = self._robot_delta_from_plot_to_goal(
                 state["goal_cx"],
