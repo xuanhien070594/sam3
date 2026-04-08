@@ -108,9 +108,9 @@ class PushAnythingPerceptionGUI(QWidget):
         self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
 
         # # TODO: will be removed once the testings on MacOS are done
-        # self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
-        # self.foundation_pose_dir = "/Users/hienbui/Downloads"
-        # self.masks_dir = "/Users/hienbui/Downloads"
+        self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
+        self.foundation_pose_dir = "/Users/hienbui/Downloads"
+        self.masks_dir = "/Users/hienbui/Downloads"
 
         self.setWindowTitle("Push Anything Perception GUI")
         self.resize(2000, 1500)
@@ -392,6 +392,8 @@ class PushAnythingPerceptionGUI(QWidget):
         object_indices = list(range(n))
         rng.shuffle(object_indices)
         region_edges = np.linspace(wy0, wy1, n + 1)
+        placed_polygons = []
+        max_attempts = 200
 
         for region_idx, obj_idx in enumerate(object_indices):
             state = self.object_states[obj_idx]
@@ -410,10 +412,75 @@ class PushAnythingPerceptionGUI(QWidget):
             if y_min > y_max:
                 y_min = float(region_edges[region_idx])
                 y_max = float(region_edges[region_idx + 1])
+            if x_min > x_max or y_min > y_max:
+                logger.warning(
+                    "Random goal region invalid for '{}'; keeping existing goal.",
+                    _display_object_name(state["name"]),
+                )
+                placed_polygons.append(
+                    Polygon(
+                        self._rect_corners(
+                            state["goal_cx"],
+                            state["goal_cy"],
+                            dx,
+                            dy,
+                            state["goal_angle"],
+                        )
+                    )
+                )
+                continue
 
-            state["goal_cx"] = float(rng.uniform(x_min, x_max))
-            state["goal_cy"] = float(rng.uniform(y_min, y_max))
-            state["goal_angle"] = float(rng.uniform(-180.0, 180.0))
+            accepted = False
+            for _ in range(max_attempts):
+                cand_cx = float(rng.uniform(x_min, x_max))
+                cand_cy = float(rng.uniform(y_min, y_max))
+                cand_angle = float(rng.uniform(-180.0, 180.0))
+                corners = self._rect_corners(cand_cx, cand_cy, dx, dy, cand_angle)
+
+                inside_workspace = True
+                for x, y in corners:
+                    if not (wx0 <= x <= wx1 and wy0 <= y <= wy1):
+                        inside_workspace = False
+                        break
+                if not inside_workspace:
+                    continue
+
+                cand_poly = Polygon(corners)
+                overlaps_existing = False
+                for placed_poly in placed_polygons:
+                    if (
+                        cand_poly.intersects(placed_poly)
+                        or cand_poly.distance(placed_poly) < 1e-6
+                    ):
+                        overlaps_existing = True
+                        break
+                if overlaps_existing:
+                    continue
+
+                state["goal_cx"] = cand_cx
+                state["goal_cy"] = cand_cy
+                state["goal_angle"] = cand_angle
+                placed_polygons.append(cand_poly)
+                accepted = True
+                break
+
+            if not accepted:
+                logger.warning(
+                    "Could not find non-overlapping in-workspace random goal for '{}' after {} attempts; keeping existing goal.",
+                    _display_object_name(state["name"]),
+                    max_attempts,
+                )
+                placed_polygons.append(
+                    Polygon(
+                        self._rect_corners(
+                            state["goal_cx"],
+                            state["goal_cy"],
+                            dx,
+                            dy,
+                            state["goal_angle"],
+                        )
+                    )
+                )
 
     def on_randomize_goals(self) -> None:
         logger.info("User pressed Randomize Goals")
@@ -741,10 +808,10 @@ class PushAnythingPerceptionGUI(QWidget):
         self.canvas.show()
         self.image_label.hide()
 
-        subprocess.Popen(
-            [sys.executable, self.auto_tracking_gui_path],
-            cwd=self.bundle_sdf_dir,
-        )
+        # subprocess.Popen(
+        #     [sys.executable, self.auto_tracking_gui_path],
+        #     cwd=self.bundle_sdf_dir,
+        # )
 
         # Send only the object names to the controller
         # target poses are set to default values and will be ignored by the controller
