@@ -50,6 +50,9 @@ WORKSPACE_Y_LIMIT = (-0.38, 0.38)
 PLOT_XLIM = (0.0, 0.8)  # robot X → plot y (positive ticks)
 PLOT_YLIM = (-0.5, 0.5)  # robot Y → plot x
 
+GOAL_X_RANGE = (-0.5, 1.0)
+GOAL_Y_RANGE = (-0.75, 0.75)
+
 
 def _robot_xy_to_plot_xy(rx: float, ry: float) -> Tuple[float, float]:
     """Map robot (x, y) to plot data coords; call invert_yaxis on the axes so +robot X is down."""
@@ -304,6 +307,14 @@ class PushAnythingPerceptionGUI(QWidget):
         self._scan_chrome_visibility_backup: Dict[Any, bool] = {}
         self._scan_stretch_backup: Optional[Tuple[int, int]] = None
         self.target_poses_publisher = TargetPosesPublisher()
+        self._goal_ax = None
+        self._dragging_goal_index: Optional[int] = None
+        self._rotating_goal_index: Optional[int] = None
+        self._rotate_prev_pointer_rad: Optional[float] = None
+
+        self.canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
+        self.canvas.mpl_connect("motion_notify_event", self._on_canvas_motion)
+        self.canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
 
     def _scan_chrome_widgets(self):
         """Secondary controls hidden during scan (main buttons + Single Goal Mode stay visible)."""
@@ -844,6 +855,7 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def update_plot(self):
         ax_left, ax = self._figure_dual_axes()
+        self._goal_ax = ax
         self._draw_left_scan_panel(ax_left)
 
         if self.object_states:
@@ -948,6 +960,133 @@ class PushAnythingPerceptionGUI(QWidget):
         self._apply_figure_margins()
         self.canvas.draw()
 
+    def _pick_goal_for_drag(self, plot_x: float, plot_y: float) -> Optional[int]:
+        if not self.object_states:
+            return None
+        best_idx = None
+        best_dist = float("inf")
+        for i, state in enumerate(self.object_states):
+            gx, gy = _robot_xy_to_plot_xy(state["goal_cx"], state["goal_cy"])
+            d = math.hypot(plot_x - gx, plot_y - gy)
+            if d < best_dist:
+                best_dist = d
+                best_idx = i
+        # Radius in plot-data units (meters) around goal center to start dragging.
+        return best_idx if best_dist <= 0.06 else None
+
+    def _set_goal_from_plot_xy(self, index: int, plot_x: float, plot_y: float) -> None:
+        if index < 0 or index >= len(self.object_states):
+            return
+        rx = float(np.clip(plot_y, GOAL_X_RANGE[0], GOAL_X_RANGE[1]))
+        ry = float(np.clip(plot_x, GOAL_Y_RANGE[0], GOAL_Y_RANGE[1]))
+        self.object_states[index]["goal_cx"] = rx
+        self.object_states[index]["goal_cy"] = ry
+
+    def _robot_delta_from_plot_to_goal(
+        self, gcx: float, gcy: float, plot_x: float, plot_y: float
+    ) -> Tuple[float, float]:
+        """Plot (x,y) is (robot_y, robot_x); vector from goal center to point in robot frame."""
+        rx_m, ry_m = plot_y, plot_x
+        return rx_m - gcx, ry_m - gcy
+
+    @staticmethod
+    def _wrap_deg_principal(deg: float) -> float:
+        """Map angle to (-180, 180] for stable display / slider (same pose mod 360)."""
+        x = float(deg) % 360.0
+        if x > 180.0:
+            x -= 360.0
+        return x
+
+    def _on_canvas_button_press(self, event) -> None:
+        if event.inaxes is None:
+            return
+        if self._goal_ax is None or event.inaxes != self._goal_ax:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        goal_idx = self._pick_goal_for_drag(float(event.xdata), float(event.ydata))
+        if goal_idx is None:
+            return
+        self.current_object_index = goal_idx
+        self.combo_object.blockSignals(True)
+        self.combo_object.setCurrentIndex(goal_idx)
+        self.combo_object.blockSignals(False)
+
+        if event.button == 1:
+            self._dragging_goal_index = goal_idx
+            self._set_goal_from_plot_xy(
+                goal_idx, float(event.xdata), float(event.ydata)
+            )
+        elif event.button == 3:
+            state = self.object_states[goal_idx]
+            drx, dry = self._robot_delta_from_plot_to_goal(
+                state["goal_cx"],
+                state["goal_cy"],
+                float(event.xdata),
+                float(event.ydata),
+            )
+            if abs(drx) < 1e-9 and abs(dry) < 1e-9:
+                return
+            self._rotating_goal_index = goal_idx
+            self._rotate_prev_pointer_rad = math.atan2(dry, drx)
+        else:
+            return
+
+        self._sync_sliders_from_state()
+        self.update_plot()
+
+    def _on_canvas_motion(self, event) -> None:
+        if self._dragging_goal_index is None and self._rotating_goal_index is None:
+            return
+        if (
+            event.inaxes is None
+            or self._goal_ax is None
+            or event.inaxes != self._goal_ax
+        ):
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        if self._dragging_goal_index is not None:
+            self._set_goal_from_plot_xy(
+                self._dragging_goal_index, float(event.xdata), float(event.ydata)
+            )
+        elif self._rotating_goal_index is not None:
+            ri = self._rotating_goal_index
+            state = self.object_states[ri]
+            drx, dry = self._robot_delta_from_plot_to_goal(
+                state["goal_cx"],
+                state["goal_cy"],
+                float(event.xdata),
+                float(event.ydata),
+            )
+            if abs(drx) < 1e-9 and abs(dry) < 1e-9:
+                return
+            pointer_rad = math.atan2(dry, drx)
+            prev = self._rotate_prev_pointer_rad
+            if prev is not None:
+                delta_rad = math.atan2(
+                    math.sin(pointer_rad - prev),
+                    math.cos(pointer_rad - prev),
+                )
+                self.object_states[ri]["goal_angle"] += math.degrees(delta_rad)
+            self._rotate_prev_pointer_rad = pointer_rad
+
+        self._sync_sliders_from_state()
+        self.update_plot()
+
+    def _on_canvas_button_release(self, event) -> None:
+        if event.button == 1:
+            self._dragging_goal_index = None
+        elif event.button == 3:
+            if self._rotating_goal_index is not None:
+                ri = self._rotating_goal_index
+                if 0 <= ri < len(self.object_states):
+                    self.object_states[ri]["goal_angle"] = self._wrap_deg_principal(
+                        float(self.object_states[ri]["goal_angle"])
+                    )
+            self._rotating_goal_index = None
+            self._rotate_prev_pointer_rad = None
+
     def _annotate_robot_frame(self, ax) -> None:
         """Draw XY triad at origin: robot +Y right, robot +X down (Z omitted)."""
         L = 0.12
@@ -1032,8 +1171,12 @@ class PushAnythingPerceptionGUI(QWidget):
             self._update_slider_value_labels()
             return
         state = self.object_states[self.current_object_index]
-        cx = int(round(max(-0.5, min(1.0, state["goal_cx"])) * 1000))
-        cy = int(round(max(-0.75, min(0.75, state["goal_cy"])) * 1000))
+        cx = int(
+            round(max(GOAL_X_RANGE[0], min(GOAL_X_RANGE[1], state["goal_cx"])) * 1000)
+        )
+        cy = int(
+            round(max(GOAL_Y_RANGE[0], min(GOAL_Y_RANGE[1], state["goal_cy"])) * 1000)
+        )
         angle = max(-360.0, min(360.0, float(state["goal_angle"])))
         rot = int(round(angle * 10))
         for s, v in (
