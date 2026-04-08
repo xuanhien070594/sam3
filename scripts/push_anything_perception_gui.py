@@ -108,9 +108,9 @@ class PushAnythingPerceptionGUI(QWidget):
         self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
 
         # # TODO: will be removed once the testings on MacOS are done
-        self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
-        self.foundation_pose_dir = "/Users/hienbui/Downloads"
-        self.masks_dir = "/Users/hienbui/Downloads"
+        # self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
+        # self.foundation_pose_dir = "/Users/hienbui/Downloads"
+        # self.masks_dir = "/Users/hienbui/Downloads"
 
         self.setWindowTitle("Push Anything Perception GUI")
         self.resize(2000, 1500)
@@ -146,6 +146,10 @@ class PushAnythingPerceptionGUI(QWidget):
         self.btn_default_goals.setFont(_primary_font)
         self.btn_default_goals.setMinimumHeight(46)
         self.btn_default_goals.clicked.connect(self.on_default_goals)
+        self.btn_randomize_goals = QPushButton("Randomize Goals")
+        self.btn_randomize_goals.setFont(_primary_font)
+        self.btn_randomize_goals.setMinimumHeight(46)
+        self.btn_randomize_goals.clicked.connect(self.on_randomize_goals)
 
         self.checkbox_single_goal_mode = QCheckBox("Single Goal Mode")
         self.checkbox_single_goal_mode.setChecked(True)
@@ -176,6 +180,7 @@ class PushAnythingPerceptionGUI(QWidget):
         object_row_layout.addWidget(self.label_object)
         object_row_layout.addWidget(self.combo_object)
         object_row_layout.addWidget(self.btn_default_goals)
+        object_row_layout.addWidget(self.btn_randomize_goals)
         object_row_layout.addWidget(self.warning_label)
         object_row_layout.addWidget(self.valid_goals_label)
         object_row_layout.addStretch()
@@ -233,6 +238,7 @@ class PushAnythingPerceptionGUI(QWidget):
         self.label_object.hide()
         self.combo_object.hide()
         self.btn_default_goals.hide()
+        self.btn_randomize_goals.hide()
         self.warning_label.hide()
         self.valid_goals_label.hide()
 
@@ -293,6 +299,7 @@ class PushAnythingPerceptionGUI(QWidget):
             self.label_object,
             self.combo_object,
             self.btn_default_goals,
+            self.btn_randomize_goals,
             self.warning_label,
             self.valid_goals_label,
             self.label_slider_x,
@@ -346,13 +353,22 @@ class PushAnythingPerceptionGUI(QWidget):
         self._scan_stretch_backup = None
 
     def _apply_default_goals(self) -> None:
-        """Same layout as initial goals in on_select: center X, spread Y, 0° rotation."""
-        num_objects = len(self.object_states)
-        if num_objects == 0:
+        """Center of each workspace partition, 0° angle, cyclic object assignment."""
+        n = len(self.object_states)
+        if n == 0:
             return
+
+        wx0, wx1 = WORKSPACE_X_LIMIT
+        wy0, wy1 = WORKSPACE_Y_LIMIT
+        cx_center = 0.5 * (wx0 + wx1)
+        region_edges = np.linspace(wy0, wy1, n + 1)
+        region_centers = 0.5 * (region_edges[:-1] + region_edges[1:])
+
+        # Cyclic shift by one partition: A->B, B->C, C->A.
         for i, state in enumerate(self.object_states):
-            state["goal_cx"] = 0.5
-            state["goal_cy"] = 0.2 * (i % num_objects) - (0.2 * (num_objects - 1)) / 2
+            target_region = (i + 1) % n
+            state["goal_cx"] = float(cx_center)
+            state["goal_cy"] = float(region_centers[target_region])
             state["goal_angle"] = 0.0
 
     def on_default_goals(self) -> None:
@@ -360,6 +376,50 @@ class PushAnythingPerceptionGUI(QWidget):
         if not self.object_states:
             return
         self._apply_default_goals()
+        self._sync_sliders_from_state()
+        self.update_plot()
+
+    def _apply_randomized_goals(self) -> None:
+        """Split workspace into N regions on Y; assign one object per region and randomize pose."""
+        n = len(self.object_states)
+        if n == 0:
+            return
+        rng = np.random.default_rng()
+        wx0, wx1 = WORKSPACE_X_LIMIT
+        wy0, wy1 = WORKSPACE_Y_LIMIT
+
+        # Shuffle object-to-region mapping so each object is assigned to a random region.
+        object_indices = list(range(n))
+        rng.shuffle(object_indices)
+        region_edges = np.linspace(wy0, wy1, n + 1)
+
+        for region_idx, obj_idx in enumerate(object_indices):
+            state = self.object_states[obj_idx]
+            dx = float(state["dims"][0])
+            dy = float(state["dims"][1])
+            # Keep full rotated box inside workspace via circumscribed-circle margin.
+            margin = 0.5 * math.hypot(dx, dy)
+            x_min = wx0 + margin
+            x_max = wx1 - margin
+            y_min = float(region_edges[region_idx]) + margin
+            y_max = float(region_edges[region_idx + 1]) - margin
+
+            # Fallback if object is too large for strict margin in region/workspace.
+            if x_min > x_max:
+                x_min, x_max = wx0, wx1
+            if y_min > y_max:
+                y_min = float(region_edges[region_idx])
+                y_max = float(region_edges[region_idx + 1])
+
+            state["goal_cx"] = float(rng.uniform(x_min, x_max))
+            state["goal_cy"] = float(rng.uniform(y_min, y_max))
+            state["goal_angle"] = float(rng.uniform(-180.0, 180.0))
+
+    def on_randomize_goals(self) -> None:
+        logger.info("User pressed Randomize Goals")
+        if not self.object_states:
+            return
+        self._apply_randomized_goals()
         self._sync_sliders_from_state()
         self.update_plot()
 
@@ -582,6 +642,7 @@ class PushAnythingPerceptionGUI(QWidget):
         self.label_object.hide()
         self.combo_object.hide()
         self.btn_default_goals.hide()
+        self.btn_randomize_goals.hide()
         self.warning_label.hide()
         self.valid_goals_label.hide()
         self.label_slider_x.hide()
@@ -670,10 +731,10 @@ class PushAnythingPerceptionGUI(QWidget):
         self.canvas.show()
         self.image_label.hide()
 
-        # subprocess.Popen(
-        #     [sys.executable, self.auto_tracking_gui_path],
-        #     cwd=self.bundle_sdf_dir,
-        # )
+        subprocess.Popen(
+            [sys.executable, self.auto_tracking_gui_path],
+            cwd=self.bundle_sdf_dir,
+        )
 
     def on_select(self):
         logger.info("User pressed Select Goals button")
@@ -741,6 +802,10 @@ class PushAnythingPerceptionGUI(QWidget):
                 }
             )
 
+        # Keep object list order consistent with scene layout (left → right).
+        # Plot x-axis maps to robot Y, so sorting by cy gives left-to-right ordering.
+        self.object_states.sort(key=lambda s: float(s["cy"]))
+
         self.current_object_index = 0 if self.object_states else -1
 
         # Hide image and show plot and sliders
@@ -755,6 +820,7 @@ class PushAnythingPerceptionGUI(QWidget):
         self.label_object.show()
         self.combo_object.show()
         self.btn_default_goals.show()
+        self.btn_randomize_goals.show()
 
         self._populate_object_combo()
         self._sync_sliders_from_state()
