@@ -6,7 +6,6 @@ from PyQt5.QtWidgets import (
     QWidget,
     QLabel,
     QPushButton,
-    QSlider,
     QComboBox,
     QCheckBox,
     QVBoxLayout,
@@ -111,9 +110,9 @@ class PushAnythingPerceptionGUI(QWidget):
         self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
 
         # # TODO: will be removed once the testings on MacOS are done
-        # self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
-        # self.foundation_pose_dir = "/Users/hienbui/Downloads"
-        # self.masks_dir = "/Users/hienbui/Downloads"
+        self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
+        self.foundation_pose_dir = "/Users/hienbui/Downloads"
+        self.masks_dir = "/Users/hienbui/Downloads"
 
         self.setWindowTitle("Push Anything Perception GUI")
         self.resize(2000, 1500)
@@ -136,23 +135,6 @@ class PushAnythingPerceptionGUI(QWidget):
         # Select Goals: only after a completed Scan. Send Goals: after Select Goals + valid goals.
         self.btn2.setEnabled(False)
         self.btn3.setEnabled(False)
-
-        self.slider_x = QSlider(Qt.Horizontal)
-        self.slider_y = QSlider(Qt.Horizontal)
-        self.slider_rot = QSlider(Qt.Horizontal)
-        self.slider_x.setRange(-500, 1000)
-        self.slider_y.setRange(-750, 750)
-        self.slider_rot.setRange(-3600, 3600)
-        self.slider_x.setSingleStep(10)
-        self.slider_y.setSingleStep(10)
-        self.slider_rot.setSingleStep(10)
-        _slider_track_w = 500
-        for _s in (self.slider_x, self.slider_y, self.slider_rot):
-            # Enough height so the handle is not clipped in tight rows (esp. macOS)
-            _s.setMinimumHeight(36)
-            # Max width alone does not grow the slider — Preferred uses a small hint; fix the track size.
-            _s.setFixedWidth(_slider_track_w)
-            _s.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
         self.label_object = QLabel("Object: ")
         self.label_object.setFont(_primary_font)
@@ -184,9 +166,6 @@ class PushAnythingPerceptionGUI(QWidget):
         self.btn1.clicked.connect(self.on_scan_clicked)
         self.btn2.clicked.connect(self.on_select)
         self.btn3.clicked.connect(self.on_send_to_controller)
-        self.slider_x.valueChanged.connect(self.on_slider_x_changed)
-        self.slider_y.valueChanged.connect(self.on_slider_y_changed)
-        self.slider_rot.valueChanged.connect(self.on_slider_rot_changed)
         self.combo_object.currentIndexChanged.connect(self.on_object_combo_changed)
 
         button_layout.addWidget(self.btn1)
@@ -206,9 +185,9 @@ class PushAnythingPerceptionGUI(QWidget):
         sliders_layout = QVBoxLayout()
         sliders_layout.setSpacing(16)
         sliders_layout.setContentsMargins(0, 8, 0, 8)
-        self.label_slider_x = QLabel("X (m)")
-        self.label_slider_y = QLabel("Y (m)")
-        self.label_slider_rot = QLabel("Rot (°)")
+        self.label_slider_x = QLabel("Goal X (m)")
+        self.label_slider_y = QLabel("Goal Y (m)")
+        self.label_slider_rot = QLabel("Goal Rot (°)")
         self.value_slider_x = QLabel("")
         self.value_slider_y = QLabel("")
         self.value_slider_rot = QLabel("")
@@ -229,17 +208,14 @@ class PushAnythingPerceptionGUI(QWidget):
 
         row_x = QHBoxLayout()
         row_x.addWidget(self.label_slider_x)
-        row_x.addWidget(self.slider_x, 0)
         row_x.addWidget(self.value_slider_x)
         row_x.addStretch(1)
         row_y = QHBoxLayout()
         row_y.addWidget(self.label_slider_y)
-        row_y.addWidget(self.slider_y, 0)
         row_y.addWidget(self.value_slider_y)
         row_y.addStretch(1)
         row_rot = QHBoxLayout()
         row_rot.addWidget(self.label_slider_rot)
-        row_rot.addWidget(self.slider_rot, 0)
         row_rot.addWidget(self.value_slider_rot)
         row_rot.addStretch(1)
         for _row in (row_x, row_y, row_rot):
@@ -253,9 +229,6 @@ class PushAnythingPerceptionGUI(QWidget):
         self.label_slider_x.hide()
         self.label_slider_y.hide()
         self.label_slider_rot.hide()
-        self.slider_x.hide()
-        self.slider_y.hide()
-        self.slider_rot.hide()
         self.value_slider_x.hide()
         self.value_slider_y.hide()
         self.value_slider_rot.hide()
@@ -327,9 +300,6 @@ class PushAnythingPerceptionGUI(QWidget):
             self.label_slider_x,
             self.label_slider_y,
             self.label_slider_rot,
-            self.slider_x,
-            self.slider_y,
-            self.slider_rot,
             self.value_slider_x,
             self.value_slider_y,
             self.value_slider_rot,
@@ -619,9 +589,6 @@ class PushAnythingPerceptionGUI(QWidget):
         self.label_slider_x.hide()
         self.label_slider_y.hide()
         self.label_slider_rot.hide()
-        self.slider_x.hide()
-        self.slider_y.hide()
-        self.slider_rot.hide()
         self.value_slider_x.hide()
         self.value_slider_y.hide()
         self.value_slider_rot.hide()
@@ -705,10 +672,10 @@ class PushAnythingPerceptionGUI(QWidget):
         self.canvas.show()
         self.image_label.hide()
 
-        subprocess.Popen(
-            [sys.executable, self.auto_tracking_gui_path],
-            cwd=self.bundle_sdf_dir,
-        )
+        # subprocess.Popen(
+        #     [sys.executable, self.auto_tracking_gui_path],
+        #     cwd=self.bundle_sdf_dir,
+        # )
 
     def on_select(self):
         logger.info("User pressed Select Goals button")
@@ -784,9 +751,6 @@ class PushAnythingPerceptionGUI(QWidget):
         self.label_slider_x.show()
         self.label_slider_y.show()
         self.label_slider_rot.show()
-        self.slider_x.show()
-        self.slider_y.show()
-        self.slider_rot.show()
         self.value_slider_x.show()
         self.value_slider_y.show()
         self.value_slider_rot.show()
@@ -1167,45 +1131,8 @@ class PushAnythingPerceptionGUI(QWidget):
         self.value_slider_rot.setText(f"{st['goal_angle']:.1f}°")
 
     def _sync_sliders_from_state(self) -> None:
-        if not self.object_states or self.current_object_index < 0:
-            self._update_slider_value_labels()
-            return
-        state = self.object_states[self.current_object_index]
-        cx = int(
-            round(max(GOAL_X_RANGE[0], min(GOAL_X_RANGE[1], state["goal_cx"])) * 1000)
-        )
-        cy = int(
-            round(max(GOAL_Y_RANGE[0], min(GOAL_Y_RANGE[1], state["goal_cy"])) * 1000)
-        )
-        angle = max(-360.0, min(360.0, float(state["goal_angle"])))
-        rot = int(round(angle * 10))
-        for s, v in (
-            (self.slider_x, cx),
-            (self.slider_y, cy),
-            (self.slider_rot, rot),
-        ):
-            s.blockSignals(True)
-            s.setValue(v)
-            s.blockSignals(False)
+        # Sliders were removed; keep this helper as the single entry point for value-label refresh.
         self._update_slider_value_labels()
-
-    def on_slider_x_changed(self, value: int) -> None:
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["goal_cx"] = value / 1000.0
-        self._update_slider_value_labels()
-        self.update_plot()
-
-    def on_slider_y_changed(self, value: int) -> None:
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["goal_cy"] = value / 1000.0
-        self._update_slider_value_labels()
-        self.update_plot()
-
-    def on_slider_rot_changed(self, value: int) -> None:
-        if self.object_states and self.current_object_index >= 0:
-            self.object_states[self.current_object_index]["goal_angle"] = value / 10.0
-        self._update_slider_value_labels()
-        self.update_plot()
 
     def _populate_object_combo(self) -> None:
         self.combo_object.blockSignals(True)
