@@ -144,10 +144,7 @@ def _robot_xy_to_plot_xy(rx: float, ry: float) -> Tuple[float, float]:
 OBJECT_NAME_MAPPING = {
     "I_shape_video": "Letter I",
     "R_shape_video": "Letter R",
-    "D_shape_video": "Letter D",
     "A_shape_video": "Letter A",
-    "B_shape_video": "Letter B",
-    "D_shape_video": "Letter D",
     "E_shape_video": "Letter E",
     "S_shape_video": "Letter S",
     "3_shape_video": "Number 3",
@@ -191,9 +188,9 @@ class PushAnythingPerceptionGUI(QWidget):
         self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
 
         # # TODO: will be removed once the testings on MacOS are done
-        # self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
-        # self.foundation_pose_dir = "/Users/hienbui/Downloads"
-        # self.masks_dir = "/Users/hienbui/Downloads"
+        self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
+        self.foundation_pose_dir = "/Users/hienbui/Downloads"
+        self.masks_dir = "/Users/hienbui/Downloads"
 
         self.setWindowTitle("Push Anything Perception GUI")
         self.resize(2000, 1500)
@@ -239,6 +236,23 @@ class PushAnythingPerceptionGUI(QWidget):
         self.checkbox_single_goal_mode.setFont(_primary_font)
         self.checkbox_single_goal_mode.setMinimumHeight(46)
 
+        self.label_tracking_status = QLabel("Tracking Status")
+        self.label_tracking_status.setFont(_primary_font)
+        self.label_tracking_status.setMinimumHeight(46)
+        self.label_tracking_status.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.dot_tracking_status = QLabel()
+        self.dot_tracking_status.setFixedSize(18, 18)
+
+        self.label_controller_status = QLabel("Controller Status")
+        self.label_controller_status.setFont(_primary_font)
+        self.label_controller_status.setMinimumHeight(46)
+        self.label_controller_status.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.dot_controller_status = QLabel()
+        self.dot_controller_status.setFixedSize(18, 18)
+
+        self._set_tracking_status_running(False)
+        self._set_controller_status_running(False)
+
         self.warning_label = QLabel("")
         self.warning_label.setStyleSheet("color: red; font-size: 17pt;")
         self.warning_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
@@ -258,6 +272,12 @@ class PushAnythingPerceptionGUI(QWidget):
         button_layout.addWidget(self.btn3)
         button_layout.addWidget(self.checkbox_single_goal_mode)
         button_layout.addStretch()
+        button_layout.addSpacing(12)
+        button_layout.addWidget(self.label_tracking_status)
+        button_layout.addWidget(self.dot_tracking_status)
+        button_layout.addSpacing(16)
+        button_layout.addWidget(self.label_controller_status)
+        button_layout.addWidget(self.dot_controller_status)
 
         object_row_layout = QHBoxLayout()
         object_row_layout.addWidget(self.label_object)
@@ -382,6 +402,18 @@ class PushAnythingPerceptionGUI(QWidget):
         self.canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_canvas_motion)
         self.canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
+
+    def _set_status_dot_color(self, dot_label: QLabel, running: bool) -> None:
+        color = "#2e7d32" if running else "#c62828"
+        dot_label.setStyleSheet(
+            f"border-radius: 9px; background-color: {color}; border: 1px solid #424242;"
+        )
+
+    def _set_tracking_status_running(self, running: bool) -> None:
+        self._set_status_dot_color(self.dot_tracking_status, running)
+
+    def _set_controller_status_running(self, running: bool) -> None:
+        self._set_status_dot_color(self.dot_controller_status, running)
 
     def _scan_chrome_widgets(self):
         """Secondary controls hidden during scan (main buttons + Single Goal Mode stay visible)."""
@@ -777,6 +809,8 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def _on_scan_after_ui_ready(self) -> None:
         self._kill_existing_tracking_processes()
+        self._set_tracking_status_running(False)
+        self._set_controller_status_running(False)
         if self._tracking_poll_timer is not None:
             self._tracking_poll_timer.stop()
             self._tracking_poll_timer.deleteLater()
@@ -808,6 +842,7 @@ class PushAnythingPerceptionGUI(QWidget):
         self._start_tracking_and_poll_messages()
 
     def _on_scan_thread_finished_err(self, message: str) -> None:
+        self._set_tracking_status_running(False)
         if self._scan_dialog is not None:
             self._scan_dialog.close()
             self._scan_dialog = None
@@ -895,10 +930,10 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def _start_tracking_and_poll_messages(self) -> None:
         logger.info("Starting to track objects: {}", self.current_detected_objects)
-        subprocess.Popen(
-            [sys.executable, self.auto_tracking_gui_path],
-            cwd=self.bundle_sdf_dir,
-        )
+        # subprocess.Popen(
+        #     [sys.executable, self.auto_tracking_gui_path],
+        #     cwd=self.bundle_sdf_dir,
+        # )
 
         # Send only the object names to the controller
         # target poses are set to default values and will be ignored by the controller
@@ -939,6 +974,7 @@ class PushAnythingPerceptionGUI(QWidget):
         self._restore_scan_chrome_after_scan()
         self._set_default_goals_state_after_new_scan()
         self.btn1.setEnabled(True)
+        self._set_tracking_status_running(True)
 
     def _poll_tracking_messages(self) -> None:
         if not self._object_state_subscribers:
@@ -947,6 +983,7 @@ class PushAnythingPerceptionGUI(QWidget):
         timeout_sec = 180.0
         if self._tracking_poll_started_at is not None:
             if (time.monotonic() - self._tracking_poll_started_at) >= timeout_sec:
+                self._set_tracking_status_running(False)
                 self._finish_tracking_poll_wait()
                 QMessageBox.warning(
                     self,
@@ -1108,6 +1145,7 @@ class PushAnythingPerceptionGUI(QWidget):
     def on_send_to_controller(self):
         logger.info("Send Goals button pressed")
         if not self.object_states:
+            self._set_controller_status_running(False)
             logger.warning("No object states available to push.")
             return
 
@@ -1141,6 +1179,7 @@ class PushAnythingPerceptionGUI(QWidget):
             )
 
         self._publish_target_poses_gui(goal_mode)
+        self._set_controller_status_running(True)
 
     def update_plot(self):
         ax_left, ax = self._figure_dual_axes()
