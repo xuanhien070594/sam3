@@ -1,6 +1,7 @@
 import sys
 import os
 import math
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from PyQt5.QtWidgets import (
     QApplication,
@@ -35,6 +36,7 @@ from loguru import logger
 from PIL import Image
 
 from object_detection_and_segmentation import scan_objects
+from object_state_subscriber import ObjectStateSubscriber
 from target_poses_publisher import TargetPosesPublisher
 
 
@@ -78,22 +80,25 @@ class WaitingSpinnerWidget(QWidget):
 class ScanningDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Scanning")
+        self.setWindowTitle("Scanning and Tracking")
         self.setModal(True)
         self.setWindowModality(Qt.ApplicationModal)
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
         layout = QVBoxLayout(self)
-        msg = QLabel("Scanning the scene and detecting objects")
-        msg.setAlignment(Qt.AlignCenter)
-        f = msg.font()
+        self._msg_label = QLabel("Scanning the scene and detecting objects")
+        self._msg_label.setAlignment(Qt.AlignCenter)
+        f = self._msg_label.font()
         f.setPointSize(max(f.pointSize(), 18))
-        msg.setFont(f)
-        layout.addWidget(msg)
+        self._msg_label.setFont(f)
+        layout.addWidget(self._msg_label)
         layout.addSpacing(12)
         self._spinner = WaitingSpinnerWidget(self)
         layout.addWidget(self._spinner, alignment=Qt.AlignCenter)
         layout.addSpacing(8)
         self.setMinimumWidth(360)
+
+    def set_message(self, text: str) -> None:
+        self._msg_label.setText(text)
 
 
 class ScanThread(QThread):
@@ -186,9 +191,9 @@ class PushAnythingPerceptionGUI(QWidget):
         self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
 
         # # TODO: will be removed once the testings on MacOS are done
-        self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
-        self.foundation_pose_dir = "/Users/hienbui/Downloads"
-        self.masks_dir = "/Users/hienbui/Downloads"
+        # self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
+        # self.foundation_pose_dir = "/Users/hienbui/Downloads"
+        # self.masks_dir = "/Users/hienbui/Downloads"
 
         self.setWindowTitle("Push Anything Perception GUI")
         self.resize(2000, 1500)
@@ -363,6 +368,9 @@ class PushAnythingPerceptionGUI(QWidget):
         self._scan_stretch_backup: Optional[Tuple[int, int]] = None
         self._scan_dialog: Optional[ScanningDialog] = None
         self._scan_thread: Optional[ScanThread] = None
+        self._object_state_subscribers: List[ObjectStateSubscriber] = []
+        self._tracking_poll_timer: Optional[QTimer] = None
+        self._tracking_poll_started_at: Optional[float] = None
         self.target_poses_publisher = TargetPosesPublisher()
         self._goal_ax = None
         self._dragging_goal_index: Optional[int] = None
@@ -769,6 +777,12 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def _on_scan_after_ui_ready(self) -> None:
         self._kill_existing_tracking_processes()
+        if self._tracking_poll_timer is not None:
+            self._tracking_poll_timer.stop()
+            self._tracking_poll_timer.deleteLater()
+            self._tracking_poll_timer = None
+        self._object_state_subscribers = []
+        self._tracking_poll_started_at = None
         self._scan_dialog = ScanningDialog(self)
         self._scan_dialog.show()
         self._scan_dialog.raise_()
@@ -790,13 +804,8 @@ class PushAnythingPerceptionGUI(QWidget):
         names: List[str],
         boxes: List[List[int]],
     ) -> None:
-        if self._scan_dialog is not None:
-            self._scan_dialog.close()
-            self._scan_dialog = None
         self._apply_scan_ui(img_rgb, names, boxes)
-        self._restore_scan_chrome_after_scan()
-        self._set_default_goals_state_after_new_scan()
-        self.btn1.setEnabled(True)
+        self._start_tracking_and_poll_messages()
 
     def _on_scan_thread_finished_err(self, message: str) -> None:
         if self._scan_dialog is not None:
@@ -884,10 +893,12 @@ class PushAnythingPerceptionGUI(QWidget):
         self.canvas.show()
         self.image_label.hide()
 
-        # subprocess.Popen(
-        #     [sys.executable, self.auto_tracking_gui_path],
-        #     cwd=self.bundle_sdf_dir,
-        # )
+    def _start_tracking_and_poll_messages(self) -> None:
+        logger.info("Starting to track objects: {}", self.current_detected_objects)
+        subprocess.Popen(
+            [sys.executable, self.auto_tracking_gui_path],
+            cwd=self.bundle_sdf_dir,
+        )
 
         # Send only the object names to the controller
         # target poses are set to default values and will be ignored by the controller
@@ -897,6 +908,60 @@ class PushAnythingPerceptionGUI(QWidget):
             [np.array([1.0, 0.0, 0.0, 0.0])] * len(self.current_detected_objects),
             2,
         )
+        logger.info("Published target poses to controller")
+        if self._scan_dialog is not None:
+            self._scan_dialog.set_message("Start tracking objects")
+            QApplication.processEvents()
+
+        self._object_state_subscribers = [
+            ObjectStateSubscriber(
+                channel=f"OBJECT_{name}_STATE_SIMULATION",
+            )
+            for name in self.current_detected_objects
+        ]
+        self._tracking_poll_started_at = time.monotonic()
+        self._tracking_poll_timer = QTimer(self)
+        self._tracking_poll_timer.timeout.connect(self._poll_tracking_messages)
+        self._tracking_poll_timer.start(50)
+
+    def _finish_tracking_poll_wait(self) -> None:
+        if self._tracking_poll_timer is not None:
+            self._tracking_poll_timer.stop()
+            self._tracking_poll_timer.deleteLater()
+            self._tracking_poll_timer = None
+        self._object_state_subscribers = []
+        self._tracking_poll_started_at = None
+
+        if self._scan_dialog is not None:
+            self._scan_dialog.close()
+            self._scan_dialog = None
+
+        self._restore_scan_chrome_after_scan()
+        self._set_default_goals_state_after_new_scan()
+        self.btn1.setEnabled(True)
+
+    def _poll_tracking_messages(self) -> None:
+        if not self._object_state_subscribers:
+            return
+
+        timeout_sec = 180.0
+        if self._tracking_poll_started_at is not None:
+            if (time.monotonic() - self._tracking_poll_started_at) >= timeout_sec:
+                self._finish_tracking_poll_wait()
+                QMessageBox.warning(
+                    self,
+                    "Failed to track objects! Please try scanning and tracking again.",
+                )
+                return
+
+        for subscriber in self._object_state_subscribers:
+            if not subscriber.has_received:
+                subscriber.poll(0)
+
+        if all(
+            subscriber.has_received for subscriber in self._object_state_subscribers
+        ):
+            self._finish_tracking_poll_wait()
 
     def _set_default_goals_state_after_new_scan(self) -> None:
         """A new scan invalidates prior goal selection (same as UI before Select Goals)."""

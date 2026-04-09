@@ -59,6 +59,7 @@ dev = [
     "loguru",
     "lcm",
     "pyrealsense2",
+    "pyqtwaitingspinner"
 ]
 notebooks = [
     "matplotlib",
