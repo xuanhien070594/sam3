@@ -38,6 +38,7 @@ from PIL import Image
 from object_detection_and_segmentation import scan_objects
 from object_state_subscriber import ObjectStateSubscriber
 from target_poses_publisher import TargetPosesPublisher
+from controller_command_sender import ControllerCommandSenser
 
 
 class WaitingSpinnerWidget(QWidget):
@@ -173,6 +174,22 @@ PLOT_FONTSIZE_AXES = 11
 class PushAnythingPerceptionGUI(QWidget):
     def __init__(self):
         super().__init__()
+        remote_host = "anything@192.168.1.2"
+        controller_cmd = (
+            "bazel-bin/examples/sampling_c3/franka_sampling_c3_controller "
+            "--is_simulation=true --demo_name=anything"
+        )
+        visualizer_cmd = (
+            "bazel-bin/examples/sampling_c3/franka_visualizer "
+            "--is_simulation=false --demo_name=anything"
+        )
+
+        self.controller_command_sender = ControllerCommandSenser(
+            remote_host=remote_host, remote_exec=controller_cmd
+        )
+        self.visualizer_command_sender = ControllerCommandSenser(
+            remote_host=remote_host, remote_exec=visualizer_cmd
+        )
 
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.captured_image_filename = "realsense_capture.jpg"
@@ -188,9 +205,9 @@ class PushAnythingPerceptionGUI(QWidget):
         self.masks_dir = os.path.join(self.bundle_sdf_dir, "assets")
 
         # # TODO: will be removed once the testings on MacOS are done
-        self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
-        self.foundation_pose_dir = "/Users/hienbui/Downloads"
-        self.masks_dir = "/Users/hienbui/Downloads"
+        # self.mesh_assets_dir = "/Users/hienbui/Downloads/assets_textured"
+        # self.foundation_pose_dir = "/Users/hienbui/Downloads"
+        # self.masks_dir = "/Users/hienbui/Downloads"
 
         self.setWindowTitle("Push Anything Perception GUI")
         self.resize(2000, 1500)
@@ -202,7 +219,7 @@ class PushAnythingPerceptionGUI(QWidget):
         button_layout = QHBoxLayout()
         self.btn1 = QPushButton("Scan")
         self.btn2 = QPushButton("Select Goals")
-        self.btn3 = QPushButton("Send Goals")
+        self.btn3 = QPushButton("Send Goals and Start Controller")
         _primary_font = QFont()
         _primary_font.setPointSize(15)
         self._primary_font = _primary_font
@@ -930,10 +947,10 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def _start_tracking_and_poll_messages(self) -> None:
         logger.info("Starting to track objects: {}", self.current_detected_objects)
-        # subprocess.Popen(
-        #     [sys.executable, self.auto_tracking_gui_path],
-        #     cwd=self.bundle_sdf_dir,
-        # )
+        subprocess.Popen(
+            [sys.executable, self.auto_tracking_gui_path],
+            cwd=self.bundle_sdf_dir,
+        )
 
         # Send only the object names to the controller
         # target poses are set to default values and will be ignored by the controller
@@ -975,6 +992,8 @@ class PushAnythingPerceptionGUI(QWidget):
         self._set_default_goals_state_after_new_scan()
         self.btn1.setEnabled(True)
         self._set_tracking_status_running(True)
+        self.visualizer_command_sender.stop_remote()
+        self.visualizer_command_sender.start_remote()
 
     def _poll_tracking_messages(self) -> None:
         if not self._object_state_subscribers:
@@ -1141,6 +1160,11 @@ class PushAnythingPerceptionGUI(QWidget):
             len(obj_names),
             goal_mode,
         )
+        self._set_controller_status_running(False)
+        self.controller_command_sender.stop_remote()
+        time.sleep(3)
+        self.controller_command_sender.start_remote()
+        self._set_controller_status_running(True)
 
     def on_send_to_controller(self):
         logger.info("Send Goals button pressed")

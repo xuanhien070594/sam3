@@ -24,6 +24,7 @@ class ControllerCommandSenser:
         self.remote_log_file = remote_log_file
         self.ssh_connect_timeout_sec = ssh_connect_timeout_sec
         self.ssh_command_timeout_sec = ssh_command_timeout_sec
+        self.state = "stopped"
 
     def _run_ssh(self, remote_cmd: str, check: bool = True) -> None:
         try:
@@ -92,6 +93,7 @@ class ControllerCommandSenser:
             f"echo $! > {shlex.quote(self.remote_pid_file)}"
         )
         self._spawn_ssh_detached(remote_cmd)
+        self.state = "running"
         print("Start command dispatched in background.")
 
     def stop_remote(self) -> None:
@@ -124,6 +126,10 @@ class ControllerCommandSenser:
             "fi"
         )
         self._run_ssh(remote_cmd, check=False)
+        self.state = "stopped"
+
+    def is_running(self) -> bool:
+        return self.state == "running"
 
 
 def main() -> None:
