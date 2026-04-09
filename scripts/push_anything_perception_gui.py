@@ -286,6 +286,8 @@ class PushAnythingPerceptionGUI(QWidget):
         self.target_poses_publisher = TargetPosesPublisher()
         self._goal_ax = None
         self._dragging_goal_index: Optional[int] = None
+        # Plot-space (px, py) offset from goal center to grab point while dragging (avoids snapping).
+        self._drag_plot_offset: Optional[Tuple[float, float]] = None
         self._rotating_goal_index: Optional[int] = None
         self._rotate_prev_pointer_rad: Optional[float] = None
 
@@ -1070,22 +1072,8 @@ class PushAnythingPerceptionGUI(QWidget):
         self._apply_figure_margins()
         self.canvas.draw()
 
-    def _pick_goal_for_drag(self, plot_x: float, plot_y: float) -> Optional[int]:
-        if not self.object_states:
-            return None
-        best_idx = None
-        best_dist = float("inf")
-        for i, state in enumerate(self.object_states):
-            gx, gy = _robot_xy_to_plot_xy(state["goal_cx"], state["goal_cy"])
-            d = math.hypot(plot_x - gx, plot_y - gy)
-            if d < best_dist:
-                best_dist = d
-                best_idx = i
-        # Radius in plot-data units (meters) around goal center to start dragging.
-        return best_idx if best_dist <= 0.06 else None
-
-    def _pick_goal_for_rotation(self, plot_x: float, plot_y: float) -> Optional[int]:
-        """Pick goal when click lies inside its rotated goal bbox in plot coordinates."""
+    def _pick_goal_in_rotated_bbox(self, plot_x: float, plot_y: float) -> Optional[int]:
+        """Pick goal when (plot_x, plot_y) lies inside its rotated goal bbox; tie-break by center distance."""
         if not self.object_states:
             return None
         clicked_point = Point(float(plot_x), float(plot_y))
@@ -1111,6 +1099,13 @@ class PushAnythingPerceptionGUI(QWidget):
                 best_dist = d
                 best_idx = i
         return best_idx
+
+    def _pick_goal_for_drag(self, plot_x: float, plot_y: float) -> Optional[int]:
+        return self._pick_goal_in_rotated_bbox(plot_x, plot_y)
+
+    def _pick_goal_for_rotation(self, plot_x: float, plot_y: float) -> Optional[int]:
+        """Pick goal when click lies inside its rotated goal bbox in plot coordinates."""
+        return self._pick_goal_in_rotated_bbox(plot_x, plot_y)
 
     def _set_goal_from_plot_xy(self, index: int, plot_x: float, plot_y: float) -> None:
         if index < 0 or index >= len(self.object_states):
@@ -1150,9 +1145,19 @@ class PushAnythingPerceptionGUI(QWidget):
             self.combo_object.blockSignals(True)
             self.combo_object.setCurrentIndex(goal_idx)
             self.combo_object.blockSignals(False)
+            state = self.object_states[goal_idx]
+            gpx, gpy = _robot_xy_to_plot_xy(
+                float(state["goal_cx"]), float(state["goal_cy"])
+            )
+            self._drag_plot_offset = (
+                float(event.xdata) - gpx,
+                float(event.ydata) - gpy,
+            )
             self._dragging_goal_index = goal_idx
             self._set_goal_from_plot_xy(
-                goal_idx, float(event.xdata), float(event.ydata)
+                goal_idx,
+                float(event.xdata) - self._drag_plot_offset[0],
+                float(event.ydata) - self._drag_plot_offset[1],
             )
         elif event.button == 3:
             goal_idx = self._pick_goal_for_rotation(
@@ -1193,8 +1198,11 @@ class PushAnythingPerceptionGUI(QWidget):
         if event.xdata is None or event.ydata is None:
             return
         if self._dragging_goal_index is not None:
+            ox, oy = self._drag_plot_offset or (0.0, 0.0)
             self._set_goal_from_plot_xy(
-                self._dragging_goal_index, float(event.xdata), float(event.ydata)
+                self._dragging_goal_index,
+                float(event.xdata) - ox,
+                float(event.ydata) - oy,
             )
         elif self._rotating_goal_index is not None:
             ri = self._rotating_goal_index
@@ -1223,6 +1231,7 @@ class PushAnythingPerceptionGUI(QWidget):
     def _on_canvas_button_release(self, event) -> None:
         if event.button == 1:
             self._dragging_goal_index = None
+            self._drag_plot_offset = None
         elif event.button == 3:
             if self._rotating_goal_index is not None:
                 ri = self._rotating_goal_index
