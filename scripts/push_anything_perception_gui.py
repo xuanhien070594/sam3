@@ -186,10 +186,14 @@ class PushAnythingPerceptionGUI(QWidget):
         )
 
         self.controller_command_sender = ControllerCommandSenser(
-            remote_host=remote_host, remote_workdir=remote_workdir, remote_exec=controller_cmd
+            remote_host=remote_host,
+            remote_workdir=remote_workdir,
+            remote_exec=controller_cmd,
         )
         self.visualizer_command_sender = ControllerCommandSenser(
-            remote_host=remote_host, remote_workdir=remote_workdir, remote_exec=visualizer_cmd
+            remote_host=remote_host,
+            remote_workdir=remote_workdir,
+            remote_exec=visualizer_cmd,
         )
 
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -267,6 +271,12 @@ class PushAnythingPerceptionGUI(QWidget):
         self.label_controller_status.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.dot_controller_status = QLabel()
         self.dot_controller_status.setFixedSize(18, 18)
+        self.btn_stop_tracking = QPushButton("Stop Tracking")
+        self.btn_stop_tracking.setFont(_primary_font)
+        self.btn_stop_tracking.setMinimumHeight(46)
+        self.btn_stop_controller = QPushButton("Stop Controller")
+        self.btn_stop_controller.setFont(_primary_font)
+        self.btn_stop_controller.setMinimumHeight(46)
 
         self._set_tracking_status_running(False)
         self._set_controller_status_running(False)
@@ -283,6 +293,8 @@ class PushAnythingPerceptionGUI(QWidget):
         self.btn1.clicked.connect(self.on_scan_clicked)
         self.btn2.clicked.connect(self.on_select)
         self.btn3.clicked.connect(self.on_send_to_controller)
+        self.btn_stop_tracking.clicked.connect(self.on_stop_tracking_clicked)
+        self.btn_stop_controller.clicked.connect(self.on_stop_controller_clicked)
         self.combo_object.currentIndexChanged.connect(self.on_object_combo_changed)
 
         button_layout.addWidget(self.btn1)
@@ -296,6 +308,9 @@ class PushAnythingPerceptionGUI(QWidget):
         button_layout.addSpacing(16)
         button_layout.addWidget(self.label_controller_status)
         button_layout.addWidget(self.dot_controller_status)
+        button_layout.addSpacing(16)
+        button_layout.addWidget(self.btn_stop_tracking)
+        button_layout.addWidget(self.btn_stop_controller)
 
         object_row_layout = QHBoxLayout()
         object_row_layout.addWidget(self.label_object)
@@ -432,6 +447,18 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def _set_controller_status_running(self, running: bool) -> None:
         self._set_status_dot_color(self.dot_controller_status, running)
+
+    def on_stop_tracking_clicked(self) -> None:
+        logger.info("Stop Tracking button pressed")
+        self._set_tracking_status_running(False)
+        QApplication.processEvents()
+        self._kill_existing_tracking_processes()
+
+    def on_stop_controller_clicked(self) -> None:
+        logger.info("Stop Controller button pressed")
+        self._set_controller_status_running(False)
+        QApplication.processEvents()
+        self.controller_command_sender.stop_remote()
 
     def _scan_chrome_widgets(self):
         """Secondary controls hidden during scan (main buttons + Single Goal Mode stay visible)."""
