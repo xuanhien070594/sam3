@@ -47,6 +47,36 @@ def _convert_box_to_xywh(box, img_w, img_h):
     return [x1, y1, x2 - x1, y2 - y1]
 
 
+def _filter_small_detections(
+    boxes: List[List[int]], labels: List[str], img_w: int, img_h: int
+) -> Tuple[List[List[int]], List[str]]:
+    """Remove tiny Gemini detections (often hallucinated fragments)."""
+    if not boxes or len(boxes) != len(labels):
+        return boxes, labels
+
+    img_area = float(max(1, img_w * img_h))
+    min_area_px = max(700.0, 0.0015 * img_area)
+    min_side_px = 18
+
+    filtered_boxes: List[List[int]] = []
+    filtered_labels: List[str] = []
+    for box, label in zip(boxes, labels):
+        x, y, bw, bh = [int(v) for v in box]
+        area = bw * bh
+        if area < min_area_px or min(bw, bh) < min_side_px:
+            continue
+        filtered_boxes.append([x, y, bw, bh])
+        filtered_labels.append(label)
+
+    if not filtered_boxes:
+        print(
+            "Small-box filter removed all boxes; falling back to raw Gemini detections."
+        )
+        return boxes, labels
+
+    return filtered_boxes, filtered_labels
+
+
 def generate_gemini_mask(
     img: Image.Image, client: genai.Client, object_names: List[str]
 ) -> Tuple[List[List[int]], List[str]]:
@@ -89,6 +119,9 @@ def generate_gemini_mask(
         bounding_boxes.append(bbox)
         labels.append(label)
 
+    bounding_boxes, labels = _filter_small_detections(
+        bounding_boxes, labels, img_w, img_h
+    )
     return bounding_boxes, labels
 
 
