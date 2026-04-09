@@ -1,5 +1,6 @@
 import sys
 import os
+import math
 from typing import Any, Dict, List, Optional, Tuple
 from PyQt5.QtWidgets import (
     QApplication,
@@ -12,9 +13,10 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
     QMessageBox,
+    QDialog,
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt5.QtGui import QFont, QColor, QPainter, QPen
 import numpy as np
 import trimesh
 import psutil
@@ -34,6 +36,82 @@ from PIL import Image
 
 from object_detection_and_segmentation import scan_objects
 from target_poses_publisher import TargetPosesPublisher
+
+
+class WaitingSpinnerWidget(QWidget):
+    def __init__(self, parent: Optional[QWidget] = None, size: int = 72) -> None:
+        super().__init__(parent)
+        self._rotation_deg = 0.0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(50)
+        self.setFixedSize(size, size)
+
+    def _tick(self) -> None:
+        self._rotation_deg = (self._rotation_deg + 15.0) % 360.0
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        cx = self.width() * 0.5
+        cy = self.height() * 0.5
+        outer_r = min(self.width(), self.height()) * 0.5 - 4
+        inner_r = outer_r * 0.55
+        n = 12
+        for i in range(n):
+            t = (i / float(n)) * 2.0 * math.pi
+            angle = t + math.radians(self._rotation_deg)
+            opacity = 0.25 + 0.75 * (1.0 - (i / float(max(n - 1, 1))))
+            painter.setOpacity(opacity)
+            pen = QPen(QColor(33, 150, 243))
+            pen.setWidth(4)
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            x1 = cx + inner_r * math.cos(angle)
+            y1 = cy + inner_r * math.sin(angle)
+            x2 = cx + outer_r * math.cos(angle)
+            y2 = cy + outer_r * math.sin(angle)
+            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+
+class ScanningDialog(QDialog):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Scanning")
+        self.setModal(True)
+        self.setWindowModality(Qt.ApplicationModal)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
+        layout = QVBoxLayout(self)
+        msg = QLabel("Scanning the scene and detecting objects")
+        msg.setAlignment(Qt.AlignCenter)
+        f = msg.font()
+        f.setPointSize(max(f.pointSize(), 18))
+        msg.setFont(f)
+        layout.addWidget(msg)
+        layout.addSpacing(12)
+        self._spinner = WaitingSpinnerWidget(self)
+        layout.addWidget(self._spinner, alignment=Qt.AlignCenter)
+        layout.addSpacing(8)
+        self.setMinimumWidth(360)
+
+
+class ScanThread(QThread):
+    finished_ok = pyqtSignal(object, object, object)
+    finished_err = pyqtSignal(str)
+
+    def __init__(self, gui: "PushAnythingPerceptionGUI") -> None:
+        super().__init__(None)
+        self._gui = gui
+
+    def run(self) -> None:
+        try:
+            img_rgb, names, boxes = self._gui._perform_scan_computation()
+            self.finished_ok.emit(img_rgb, names, boxes)
+        except Exception as e:
+            logger.exception("Scan thread failed: {}", e)
+            self.finished_err.emit(str(e))
+
 
 # One color per object (by order in the scene); used for both current and goal boxes.
 OBJECT_EDGE_COLORS = (
@@ -283,6 +361,8 @@ class PushAnythingPerceptionGUI(QWidget):
         self._scanning_ui_active = False
         self._scan_chrome_visibility_backup: Dict[Any, bool] = {}
         self._scan_stretch_backup: Optional[Tuple[int, int]] = None
+        self._scan_dialog: Optional[ScanningDialog] = None
+        self._scan_thread: Optional[ScanThread] = None
         self.target_poses_publisher = TargetPosesPublisher()
         self._goal_ax = None
         self._dragging_goal_index: Optional[int] = None
@@ -673,7 +753,7 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def _show_scanning_label(self) -> None:
         self._enter_scanning_only_message_ui()
-        self.image_label.setText("Scanning the scene and detecting objects...")
+        self.image_label.setText("Scanning the scene and detecting objects")
         self.image_label.show()
         self.canvas.hide()
         self.image_label.repaint()
@@ -688,18 +768,135 @@ class PushAnythingPerceptionGUI(QWidget):
         QTimer.singleShot(0, self._on_scan_after_ui_ready)
 
     def _on_scan_after_ui_ready(self) -> None:
-        scan_ok = False
-        try:
-            self.on_scan()
-            scan_ok = True
-        finally:
-            self._restore_scan_chrome_after_scan()
-            if scan_ok:
-                self._set_default_goals_state_after_new_scan()
+        self._kill_existing_tracking_processes()
+        self._scan_dialog = ScanningDialog(self)
+        self._scan_dialog.show()
+        self._scan_dialog.raise_()
+        self._scan_dialog.activateWindow()
+        QApplication.processEvents()
+
+        self._scan_thread = ScanThread(self)
+        self._scan_thread.finished_ok.connect(self._on_scan_thread_finished_ok)
+        self._scan_thread.finished_err.connect(self._on_scan_thread_finished_err)
+        self._scan_thread.finished.connect(self._clear_scan_thread_ref)
+        self._scan_thread.start()
+
+    def _clear_scan_thread_ref(self) -> None:
+        self._scan_thread = None
+
+    def _on_scan_thread_finished_ok(
+        self,
+        img_rgb: np.ndarray,
+        names: List[str],
+        boxes: List[List[int]],
+    ) -> None:
+        if self._scan_dialog is not None:
+            self._scan_dialog.close()
+            self._scan_dialog = None
+        self._apply_scan_ui(img_rgb, names, boxes)
+        self._restore_scan_chrome_after_scan()
+        self._set_default_goals_state_after_new_scan()
+        self.btn1.setEnabled(True)
+
+    def _on_scan_thread_finished_err(self, message: str) -> None:
+        if self._scan_dialog is not None:
+            self._scan_dialog.close()
+            self._scan_dialog = None
+        self._restore_scan_chrome_after_scan()
+        QMessageBox.warning(self, "Scan failed", message)
+        self.btn2.setEnabled(True)
+        self.btn3.setEnabled(False)
+        self.btn1.setEnabled(True)
+
+    def _perform_scan_computation(
+        self,
+    ) -> Tuple[np.ndarray, List[str], List[List[int]]]:
+        logger.info("User pressed Scan button")
+        img_rgb: Optional[np.ndarray] = None
+        if rs is not None:
+            img_rgb = self._capture_realsense_frame()
+        if img_rgb is None:
+            if rs is not None:
+                logger.warning(
+                    "RealSense capture failed; using fallback image: {}",
+                    self.captured_image_path,
+                )
             else:
-                self.btn2.setEnabled(True)
-                self.btn3.setEnabled(False)
-            self.btn1.setEnabled(True)
+                logger.info(
+                    "pyrealsense2 not available; using image path for scanning: {}",
+                    self.captured_image_path,
+                )
+            pil_fallback = Image.open(self.captured_image_path).convert("RGB")
+            img_rgb = np.asarray(pil_fallback)
+
+        pil_img = Image.fromarray(img_rgb)
+        scan_boxes: List[List[int]] = []
+        names: List[str] = []
+        try:
+            names, scan_boxes = scan_objects(pil_img, self.masks_dir)
+            if names and scan_boxes:
+                paired = [
+                    (name, box) for name, box in zip(names, scan_boxes) if len(box) >= 4
+                ]
+                paired.sort(key=lambda p: float(p[1][0] + p[1][2] * 0.5))
+                names = [p[0] for p in paired]
+                scan_boxes = [list(p[1]) for p in paired]
+            with open(os.path.join(self.masks_dir, "object_names.txt"), "w") as f:
+                for name in names:
+                    f.write(name + "\n")
+            logger.info(
+                "mask scanning is done, detected objects: {}",
+                names,
+            )
+        except Exception as e:
+            logger.exception("scan_objects failed: {}", e)
+            names = []
+            scan_boxes = []
+
+        return img_rgb, names, scan_boxes
+
+    def _apply_scan_ui(
+        self,
+        img_rgb: np.ndarray,
+        names: List[str],
+        boxes: List[List[int]],
+    ) -> None:
+        self.current_detected_objects = list(names)
+        self._scan_view_rgb = img_rgb
+        self._scan_view_names = list(names)
+        self._scan_view_boxes = [list(b) for b in boxes]
+
+        ax_left, ax_right = self._figure_dual_axes()
+        self._draw_left_scan_panel(ax_left)
+        ax_right.text(
+            0.5,
+            0.5,
+            "Press Select Goals",
+            transform=ax_right.transAxes,
+            ha="center",
+            va="center",
+            fontsize=PLOT_FONTSIZE_OBJECT_LABEL,
+            color="gray",
+        )
+        ax_right.axis("off")
+        self._apply_figure_margins()
+        self.canvas.draw()
+        self.canvas.show()
+        self.image_label.hide()
+
+        # subprocess.Popen(
+        #     [sys.executable, self.auto_tracking_gui_path],
+        #     cwd=self.bundle_sdf_dir,
+        # )
+
+        # Send only the object names to the controller
+        # target poses are set to default values and will be ignored by the controller
+        self.target_poses_publisher.publish_target(
+            self.current_detected_objects,
+            [np.array([0.0, 0.0])] * len(self.current_detected_objects),
+            [np.array([1.0, 0.0, 0.0, 0.0])] * len(self.current_detected_objects),
+            2,
+        )
 
     def _set_default_goals_state_after_new_scan(self) -> None:
         """A new scan invalidates prior goal selection (same as UI before Select Goals)."""
@@ -738,91 +935,6 @@ class PushAnythingPerceptionGUI(QWidget):
                         break  # stop checking other targets for this process
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-
-    def on_scan(self) -> None:
-        logger.info("User pressed Scan button")
-        self._kill_existing_tracking_processes()
-
-        img_rgb: Optional[np.ndarray] = None
-        if rs is not None:
-            img_rgb = self._capture_realsense_frame()
-        if img_rgb is None:
-            if rs is not None:
-                logger.warning(
-                    "RealSense capture failed; using fallback image: {}",
-                    self.captured_image_path,
-                )
-            else:
-                logger.info(
-                    "pyrealsense2 not available; using image path for scanning: {}",
-                    self.captured_image_path,
-                )
-            pil_fallback = Image.open(self.captured_image_path).convert("RGB")
-            img_rgb = np.asarray(pil_fallback)
-
-        pil_img = Image.fromarray(img_rgb)
-        scan_boxes: List[List[int]] = []
-        try:
-            self.current_detected_objects, scan_boxes = scan_objects(
-                pil_img, self.masks_dir
-            )
-            # Sort detections left-to-right in image space so object order is stable from Scan.
-            if self.current_detected_objects and scan_boxes:
-                paired = [
-                    (name, box)
-                    for name, box in zip(self.current_detected_objects, scan_boxes)
-                    if len(box) >= 4
-                ]
-                paired.sort(key=lambda p: float(p[1][0] + p[1][2] * 0.5))
-                self.current_detected_objects = [p[0] for p in paired]
-                scan_boxes = [list(p[1]) for p in paired]
-            with open(os.path.join(self.masks_dir, "object_names.txt"), "w") as f:
-                for name in self.current_detected_objects:
-                    f.write(name + "\n")
-            logger.info(
-                "mask scanning is done, detected objects: {}",
-                self.current_detected_objects,
-            )
-        except Exception as e:
-            logger.exception("scan_objects failed: {}", e)
-            self.current_detected_objects = []
-            scan_boxes = []
-
-        self._scan_view_rgb = img_rgb
-        self._scan_view_names = list(self.current_detected_objects)
-        self._scan_view_boxes = [list(b) for b in scan_boxes]
-
-        ax_left, ax_right = self._figure_dual_axes()
-        self._draw_left_scan_panel(ax_left)
-        ax_right.text(
-            0.5,
-            0.5,
-            "Press Select Goals",
-            transform=ax_right.transAxes,
-            ha="center",
-            va="center",
-            fontsize=PLOT_FONTSIZE_OBJECT_LABEL,
-            color="gray",
-        )
-        ax_right.axis("off")
-        self._apply_figure_margins()
-        self.canvas.draw()
-        self.canvas.show()
-        self.image_label.hide()
-
-        # subprocess.Popen(
-        #     [sys.executable, self.auto_tracking_gui_path],
-        #     cwd=self.bundle_sdf_dir,
-        # )
-
-        # Send only the object names to the controller
-        # target poses are set to default values and will be ignored by the controller
-        self.target_poses_publisher.publish_target(
-            self.current_detected_objects,
-            [np.array([0.0, 0.0])] * len(self.current_detected_objects),
-            [np.array([1.0, 0.0, 0.0, 0.0])] * len(self.current_detected_objects),
-            2,
-        )
 
     def on_select(self):
         logger.info("User pressed Select Goals button")
