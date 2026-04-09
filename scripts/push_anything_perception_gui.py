@@ -175,9 +175,10 @@ class PushAnythingPerceptionGUI(QWidget):
     def __init__(self):
         super().__init__()
         remote_host = "anything@192.168.1.2"
+        remote_workdir = "/home/anything/workspace/dairlib"
         controller_cmd = (
             "bazel-bin/examples/sampling_c3/franka_sampling_c3_controller "
-            "--is_simulation=true --demo_name=anything"
+            "--is_simulation=false --demo_name=anything --lcm_url=udpm://239.255.76.67:7667?ttl=1"
         )
         visualizer_cmd = (
             "bazel-bin/examples/sampling_c3/franka_visualizer "
@@ -185,10 +186,10 @@ class PushAnythingPerceptionGUI(QWidget):
         )
 
         self.controller_command_sender = ControllerCommandSenser(
-            remote_host=remote_host, remote_exec=controller_cmd
+            remote_host=remote_host, remote_workdir=remote_workdir, remote_exec=controller_cmd
         )
         self.visualizer_command_sender = ControllerCommandSenser(
-            remote_host=remote_host, remote_exec=visualizer_cmd
+            remote_host=remote_host, remote_workdir=remote_workdir, remote_exec=visualizer_cmd
         )
 
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
