@@ -856,12 +856,14 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def _on_scan_after_ui_ready(self) -> None:
         self._kill_existing_tracking_processes()
-        
+
         # Change the flag to False because with True flag, the tracking processes
         # will keep waiting indefinitely.
         with open(os.path.join(self.masks_dir, "register.txt"), "r+") as f:
             if f.readline() == "True":
-                logger.info("Resetting register.txt to False to unblock any waiting tracking processes")
+                logger.info(
+                    "Resetting register.txt to False to unblock any waiting tracking processes"
+                )
                 f.write("False")
             logger.info("Register.txt set to False")
         self._set_tracking_status_running(False)
@@ -894,6 +896,21 @@ class PushAnythingPerceptionGUI(QWidget):
         boxes: List[List[int]],
     ) -> None:
         self._apply_scan_ui(img_rgb, names, boxes)
+        if not names:
+            self._set_tracking_status_running(False)
+            if self._scan_dialog is not None:
+                self._scan_dialog.close()
+                self._scan_dialog = None
+            self._restore_scan_chrome_after_scan()
+            QMessageBox.warning(
+                self,
+                "No objects detected",
+                "The scan completed but no objects were found.",
+            )
+            self.btn2.setEnabled(False)
+            self.btn3.setEnabled(False)
+            self.btn1.setEnabled(True)
+            return
         self._start_tracking_and_poll_messages()
 
     def _on_scan_thread_finished_err(self, message: str) -> None:
@@ -931,26 +948,21 @@ class PushAnythingPerceptionGUI(QWidget):
         pil_img = Image.fromarray(img_rgb)
         scan_boxes: List[List[int]] = []
         names: List[str] = []
-        try:
-            names, scan_boxes = scan_objects(pil_img, self.masks_dir)
-            if names and scan_boxes:
-                paired = [
-                    (name, box) for name, box in zip(names, scan_boxes) if len(box) >= 4
-                ]
-                paired.sort(key=lambda p: float(p[1][0] + p[1][2] * 0.5))
-                names = [p[0] for p in paired]
-                scan_boxes = [list(p[1]) for p in paired]
-            with open(os.path.join(self.masks_dir, "object_names.txt"), "w") as f:
-                for name in names:
-                    f.write(name + "\n")
-            logger.info(
-                "mask scanning is done, detected objects: {}",
-                names,
-            )
-        except Exception as e:
-            logger.exception("scan_objects failed: {}", e)
-            names = []
-            scan_boxes = []
+        names, scan_boxes = scan_objects(pil_img, self.masks_dir)
+        if names and scan_boxes:
+            paired = [
+                (name, box) for name, box in zip(names, scan_boxes) if len(box) >= 4
+            ]
+            paired.sort(key=lambda p: float(p[1][0] + p[1][2] * 0.5))
+            names = [p[0] for p in paired]
+            scan_boxes = [list(p[1]) for p in paired]
+        with open(os.path.join(self.masks_dir, "object_names.txt"), "w") as f:
+            for name in names:
+                f.write(name + "\n")
+        logger.info(
+            "mask scanning is done, detected objects: {}",
+            names,
+        )
 
         return img_rgb, names, scan_boxes
 

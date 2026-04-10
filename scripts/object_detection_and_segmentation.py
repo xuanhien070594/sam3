@@ -5,7 +5,6 @@ import gc
 from PIL import Image
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
-from sam3.model.sam3_image_processor import Sam3Processor
 from sam3.visualization_utils import draw_box_on_image, normalize_bbox, plot_results
 from sam3.model.box_ops import box_xywh_to_cxcywh
 import matplotlib.pyplot as plt
@@ -176,11 +175,20 @@ def scan_objects(
                     state=inference_state, box=box, label=label
                 )
 
-            assert (
-                inference_state["masks"].shape[0] == 1
-            ), "Only one mask should be generated"
-
-            mask = inference_state["masks"][0][0].detach().cpu().numpy()
+            masks = inference_state["masks"]
+            mask_scores = inference_state["scores"]
+            n_masks = masks.shape[0]
+            if n_masks == 0:
+                raise RuntimeError(
+                    f"No mask above confidence for {object_name!r}. "
+                    "Try different lighting, a clearer view, or adjust SAM3 confidence."
+                )
+            if n_masks > 1:
+                best_i = int(mask_scores.argmax().item())
+                mask_row = masks[best_i]
+            else:
+                mask_row = masks[0]
+            mask = mask_row[0].detach().cpu().numpy()
             mask_img = Image.fromarray(mask.astype("uint8") * 255, mode="L")
             mask_img.save(f"{masks_folder}/mask_{object_name}.png")
 
