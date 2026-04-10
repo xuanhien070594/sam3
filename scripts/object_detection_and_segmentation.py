@@ -131,14 +131,15 @@ def scan_objects(
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     object_library = [
         "A_shape_video",
+        "C_shape_texture",
         "E_shape_video",
         "I_shape_video",
         "R_shape_video",
         "S_shape_video",
-        "3_shape_video",
+        "H_shape_texture",
+        "milk",
         "baby_toy",
         "book",
-        "tape",
     ]
 
     model = None

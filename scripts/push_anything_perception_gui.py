@@ -143,15 +143,17 @@ def _robot_xy_to_plot_xy(rx: float, ry: float) -> Tuple[float, float]:
 
 
 OBJECT_NAME_MAPPING = {
+    "C_shape_texture": "Letter C",
     "I_shape_video": "Letter I",
     "R_shape_video": "Letter R",
     "A_shape_video": "Letter A",
     "E_shape_video": "Letter E",
     "S_shape_video": "Letter S",
     "3_shape_video": "Number 3",
+    "H_shape_texture": "Letter H",
     "baby_toy": "Baby Toy",
     "book": "Book",
-    "tape": "Tape",
+    "milk": "Milk Carton",
 }
 
 
@@ -854,6 +856,14 @@ class PushAnythingPerceptionGUI(QWidget):
 
     def _on_scan_after_ui_ready(self) -> None:
         self._kill_existing_tracking_processes()
+        
+        # Change the flag to False because with True flag, the tracking processes
+        # will keep waiting indefinitely.
+        with open(os.path.join(self.masks_dir, "register.txt"), "r+") as f:
+            if f.readline() == "True":
+                logger.info("Resetting register.txt to False to unblock any waiting tracking processes")
+                f.write("False")
+            logger.info("Register.txt set to False")
         self._set_tracking_status_running(False)
         self._set_controller_status_running(False)
         if self._tracking_poll_timer is not None:
