@@ -82,7 +82,7 @@ def generate_gemini_mask(
     img_w, img_h = img.size
 
     prompt = f"""
-    Segment all objects ONLY on the ROBOT table.
+    Segment all objects ONLY on the ROBOT table and WITHIN THE WOODEN BOUNDARY.
     Exclude robots and the table itself.
 
     Output a JSON list where each entry contains:
